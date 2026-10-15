@@ -51,7 +51,8 @@ class ReviewApp:
         bindings = read_yaml(run_dir / "bindings.yaml", {"run_id": run_id, "bindings": []})
         calibration = load_calibration(run_dir)
         reports = []
-        for path in sorted((run_dir / "reports").glob("report_*/manifest.json"), reverse=True):
+        report_paths = (run_dir / "reports").glob("report_*/manifest.json")
+        for path in sorted(report_paths, key=lambda candidate: (candidate.stat().st_mtime_ns, candidate.parent.name), reverse=True):
             report_manifest = read_json(path)
             if report_manifest["status"] == "complete":
                 reports.append(path.parent.name)
