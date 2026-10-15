@@ -1,5 +1,5 @@
 const element = (id) => document.getElementById(id);
-const state = { runId: null, data: null, frame: 0, selected: null, image: null, playing: false, pointMode: false, points: [], requestId: 0, frameRows: new Map(), motionRows: new Map(), draftDirty: false };
+const state = { runId: null, data: null, frame: 0, selected: null, image: null, playing: false, pointMode: false, roiMode: false, roi: [], points: [], requestId: 0, runRequestId: 0, frameRows: new Map(), motionRows: new Map(), draftDirty: false };
 const colors = { home: "#28cfac", away: "#f9b26a", cluster_0: "#28cfac", cluster_1: "#f9b26a", unknown: "#a6b3b2" };
 const reasons = { unbound: "身份尚未确认", excluded: "人工排除", outside_roi: "超出可靠统计区域", outside_pitch: "投影超出球场", clipped_feet: "脚点被画面裁切", uncalibrated: "尚未标定", outside_calibration_window: "超出标定有效区间", invalid_projection: "投影无效", speed_jump: "异常速度跳变，已切段" };
 
@@ -66,6 +66,8 @@ function pointInPolygon(horizontal, vertical, polygon) {
   for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
     const [currentX, currentY] = polygon[index];
     const [previousX, previousY] = polygon[previous];
+    const cross = (horizontal - currentX) * (previousY - currentY) - (vertical - currentY) * (previousX - currentX);
+    if (Math.abs(cross) < 1e-6 && horizontal >= Math.min(currentX, previousX) && horizontal <= Math.max(currentX, previousX) && vertical >= Math.min(currentY, previousY) && vertical <= Math.max(currentY, previousY)) return true;
     if ((currentY > vertical) !== (previousY > vertical) && horizontal < (previousX - currentX) * (vertical - currentY) / (previousY - currentY) + currentX) inside = !inside;
   }
   return inside;
@@ -171,6 +173,12 @@ function drawVideo(observations) {
     context.fillStyle = "#ffd58f"; context.beginPath(); context.arc(point.image[0], point.image[1], 7, 0, Math.PI * 2); context.fill();
     context.font = "bold 24px sans-serif"; context.fillText(String(index + 1), point.image[0] + 10, point.image[1] - 10);
   });
+  if (!element("calibration-tab").hidden && state.roi.length) {
+    context.strokeStyle = "#ffe48e"; context.lineWidth = 3; context.beginPath();
+    state.roi.forEach(([horizontal, vertical], index) => index ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical));
+    if (!state.roiMode) context.closePath();
+    context.stroke();
+  }
 }
 
 function invert3(matrix) {
@@ -187,6 +195,7 @@ function displayName(playerId) {
 
 function draw() {
   if (!state.data) return;
+  element("export-download").hidden = true;
   const observations = (state.frameRows.get(state.frame) || []).map(project);
   drawVideo(observations);
   drawPitch(observations);
@@ -208,6 +217,7 @@ function draw() {
   const manifest = state.data.manifest;
   element("frame-label").textContent = `FRAME ${String(state.frame).padStart(5, "0")} / ${manifest.end_frame - 1}`;
   element("frame-slider").value = state.frame;
+  element("frame-number").value = state.frame;
   element("time-label").textContent = `${((state.frame - manifest.start_frame) / manifest.video.fps).toFixed(2)} / ${((manifest.end_frame - manifest.start_frame) / manifest.video.fps).toFixed(2)} s`;
 }
 
@@ -310,7 +320,9 @@ async function loadRun(runId, preserve = false) {
   const oldFrame = state.frame;
   state.requestId++;
   state.runId = runId;
+  const runRequestId = ++state.runRequestId;
   const data = await request(api());
+  if (runRequestId !== state.runRequestId) return;
   state.data = data;
   state.frameRows.clear(); state.motionRows.clear();
   for (const row of data.tracks) { if (!state.frameRows.has(row.frame_index)) state.frameRows.set(row.frame_index, []); state.frameRows.get(row.frame_index).push(row); }
@@ -318,6 +330,7 @@ async function loadRun(runId, preserve = false) {
   const manifest = data.manifest;
   const calibration = data.calibration;
   const slider = element("frame-slider"); slider.min = manifest.start_frame; slider.max = manifest.end_frame - 1; slider.step = manifest.config.stride;
+  element("frame-number").min = manifest.start_frame; element("frame-number").max = manifest.end_frame - 1; element("frame-number").step = manifest.config.stride;
   element("video-canvas").width = manifest.video.width; element("video-canvas").height = manifest.video.height;
   element("source-description").textContent = `${manifest.config.clip_id} · ${manifest.config.match_id} · ${data.catalog.length} 条轨迹`;
   element("video-spec").textContent = `${manifest.video.width}×${manifest.video.height} · ${manifest.video.fps.toFixed(0)} FPS`;
@@ -334,6 +347,7 @@ async function loadRun(runId, preserve = false) {
   element("calibration-reviewed").checked = calibration?.reviewed || false;
   element("calibration-fit").textContent = calibration ? `拟合点残差 ${calibration.fit_rmse_m.toFixed(3)} m，仅用于检查点的拟合情况，不能证明轨迹精度。${calibration.note || ""}` : "尚无拟合结果。";
   state.points = calibration ? calibration.image_points.map((image, index) => ({ image: [...image], pitch: [...calibration.pitch_points[index]] })) : [];
+  state.roi = calibration ? calibration.roi.map((point) => [...point]) : [];
   state.draftDirty = false;
   if (!preserve) { state.selected = null; element("binding-start").value = manifest.start_frame; element("binding-end").value = manifest.end_frame; }
   renderBindings(); renderCalibrationPoints(); renderStatistics();
@@ -354,28 +368,84 @@ async function initialize() {
 element("run-select").addEventListener("change", () => loadRun(element("run-select").value).catch((error) => notify(error.message, true)));
 element("reload").addEventListener("click", () => initialize().catch((error) => notify(error.message, true)));
 element("show-boxes").addEventListener("change", draw);
+element("export-frame").addEventListener("click", async () => {
+  if (!state.data || !state.image) return;
+  stopPlayback();
+  const frameIndex = state.frame;
+  const runId = state.runId;
+  const selectedName = element("selected-name").textContent;
+  const selectedDetails = `轨迹 ${element("selected-id").textContent} · 坐标 ${element("selected-position").textContent} m`;
+  const calibrationNote = state.data.calibration?.reviewed ? "标定已确认 · 精度待独立验证" : "标定草稿 · 仅供位置核对";
+  const canvas = document.createElement("canvas"); canvas.width = 1600; canvas.height = 760;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#f2f5f3"; context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#193632"; context.font = "bold 30px sans-serif"; context.fillText("TOUCHLINE / 球员追踪与位置对拍", 40, 55);
+  context.font = "18px sans-serif"; context.fillStyle = "#668273";
+  context.fillText(`${state.data.manifest.config.clip_id} · 源帧 ${state.frame} · 时间 ${(state.frame / state.data.manifest.video.fps).toFixed(2)} s`, 40, 92);
+  context.drawImage(element("video-canvas"), 40, 130, 1000, 562.5);
+  const pitch = element("pitch").cloneNode(true);
+  pitch.setAttribute("width", "980"); pitch.setAttribute("height", "680");
+  const serialized = new XMLSerializer().serializeToString(pitch);
+  const image = new Image();
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("图片生成超时")), 5000);
+      image.onload = () => { clearTimeout(timeout); resolve(); };
+      image.onerror = () => { clearTimeout(timeout); reject(new Error("球场图片生成失败")); };
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}`;
+    });
+    context.drawImage(image, 1070, 190, 490, 340);
+    context.fillStyle = "#193632"; context.font = "20px sans-serif";
+    context.fillText(selectedName, 1080, 590);
+    context.font = "17px sans-serif"; context.fillStyle = "#668273";
+    context.fillText(selectedDetails, 1080, 625);
+    context.fillText(calibrationNote, 1080, 660);
+    context.font = "16px sans-serif"; context.fillText("同帧对应；颜色为球队或待确认颜色簇，数字为本次运行的轨迹 ID。", 40, 735);
+    if (state.frame !== frameIndex || state.runId !== runId || element("selected-name").textContent !== selectedName) return;
+    const anchor = element("export-download"); anchor.download = `touchline-frame-${frameIndex}.png`; anchor.href = canvas.toDataURL("image/png"); anchor.hidden = false;
+    notify(`源帧 ${frameIndex} 的对拍图已生成，点击“保存 PNG”下载。`);
+  } catch { notify("导出失败，请重试。", true); }
+});
 element("play").addEventListener("click", play);
 for (const [id, direction] of [["previous-frame", -1], ["next-frame", 1]]) element(id).addEventListener("click", () => { stopPlayback(); if (state.data) showFrame(state.frame + direction * state.data.manifest.config.stride).catch((error) => notify(error.message, true)); });
 element("frame-slider").addEventListener("input", () => { stopPlayback(); showFrame(Number(element("frame-slider").value)).catch((error) => notify(error.message, true)); });
+element("frame-number").addEventListener("change", () => { stopPlayback(); showFrame(Number(element("frame-number").value)).catch((error) => notify(error.message, true)); });
+element("jump-frame").addEventListener("click", () => { stopPlayback(); showFrame(Number(element("frame-number").value)).catch((error) => notify(error.message, true)); });
+element("frame-number").addEventListener("keydown", (event) => { if (event.key === "Enter") element("jump-frame").click(); });
 document.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => {
   document.querySelectorAll("[data-tab]").forEach((tab) => { tab.classList.toggle("active", tab === button); tab.setAttribute("aria-selected", tab === button ? "true" : "false"); });
   for (const name of ["identity", "calibration", "statistics"]) element(`${name}-tab`).hidden = button.dataset.tab !== name;
-  if (button.dataset.tab !== "calibration") { state.pointMode = false; element("point-mode").textContent = "开始点选图像点"; }
+  if (button.dataset.tab !== "calibration") { state.pointMode = false; state.roiMode = false; element("point-mode").textContent = "开始点选图像点"; element("roi-mode").textContent = "点选可靠区域"; }
   draw();
 }));
 element("point-mode").addEventListener("click", async () => {
   if (!state.data) return;
+  state.roiMode = false; element("roi-mode").textContent = "点选可靠区域";
   stopPlayback(); state.pointMode = !state.pointMode;
   element("point-mode").textContent = state.pointMode ? "结束点选" : "开始点选图像点";
   if (state.pointMode) {
     try { await showFrame(Number(element("calibration-reference").value)); notify("点选模式：先填写下一点米制 x/y，再在原始画面点击相应白线交点。所有点须来自同一参考帧。"); } catch (error) { state.pointMode = false; notify(error.message, true); }
   }
 });
+element("roi-mode").addEventListener("click", async () => {
+  if (!state.data) return;
+  stopPlayback(); state.pointMode = false; element("point-mode").textContent = "开始点选图像点";
+  state.roiMode = !state.roiMode; element("roi-mode").textContent = state.roiMode ? "结束区域点选" : "点选可靠区域";
+  if (state.roiMode) {
+    state.roi = []; markDraftDirty();
+    try { await showFrame(Number(element("calibration-reference").value)); notify("按顺序点击可靠地面区域的边界（至少三点），完成后点“结束区域点选”。区域之外不计入统计。"); } catch (error) { state.roiMode = false; notify(error.message, true); }
+  }
+  draw();
+});
 element("video-canvas").addEventListener("click", (event) => {
   if (!state.data) return;
   const canvas = element("video-canvas"), rectangle = canvas.getBoundingClientRect();
   const horizontal = (event.clientX - rectangle.left) / rectangle.width * canvas.width;
   const vertical = (event.clientY - rectangle.top) / rectangle.height * canvas.height;
+  if (state.roiMode) {
+    if (state.frame !== Number(element("calibration-reference").value)) { notify("请回到参考帧后点选可靠区域。", true); return; }
+    state.roi.push([Number(horizontal.toFixed(2)), Number(vertical.toFixed(2))]); markDraftDirty(); draw(); return;
+  }
   if (state.pointMode) {
     if (state.frame !== Number(element("calibration-reference").value)) { notify("请回到参考帧后点选，不能混用不同帧的图像点。", true); return; }
     state.points.push({ image: [Number(horizontal.toFixed(2)), Number(vertical.toFixed(2))], pitch: [Number(element("target-x").value), Number(element("target-y").value)] });
@@ -404,8 +474,8 @@ element("clear-points").addEventListener("click", () => { state.points = []; mar
 element("save-calibration").addEventListener("click", async () => {
   if (!state.data) return;
   const payload = { reference_frame: Number(element("calibration-reference").value), start_frame: Number(element("calibration-start").value), end_frame: Number(element("calibration-end").value), image_points: state.points.map((point) => point.image), pitch_points: state.points.map((point) => point.pitch), pitch_length_m: Number(element("pitch-length").value), pitch_width_m: Number(element("pitch-width").value), reviewed: element("calibration-reviewed").checked, note: state.data.calibration?.note || "人工点选标定" };
-  if (state.data.calibration && !state.draftDirty) payload.roi = state.data.calibration.roi;
-  try { await request(api("calibration"), payload); state.pointMode = false; element("point-mode").textContent = "开始点选图像点"; await loadRun(state.runId, true); notify(payload.reviewed ? "标定已确认，可以生成统计报告。" : "标定草稿已保存，可在首、中、末帧对照白线叠加。"); } catch (error) { notify(error.message, true); }
+  if (state.roi.length) payload.roi = state.roi;
+  try { await request(api("calibration"), payload); state.pointMode = false; state.roiMode = false; element("point-mode").textContent = "开始点选图像点"; element("roi-mode").textContent = "点选可靠区域"; await loadRun(state.runId, true); notify(payload.reviewed ? "标定已确认，可以生成统计报告。" : "标定草稿已保存，可在首、中、末帧对照白线叠加。"); } catch (error) { notify(error.message, true); }
 });
 element("generate-report").addEventListener("click", async () => {
   if (!state.data) return;

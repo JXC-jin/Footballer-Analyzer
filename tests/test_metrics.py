@@ -36,6 +36,19 @@ class MetricsTests(unittest.TestCase):
         self.assertIsNone(rows[1]["distance_delta_m"])
         self.assertEqual(rows[1]["player_id"], "other")
 
+    def test_fragmented_tracks_share_identity_without_bridging(self):
+        bindings = [binding(end=2), binding(track_id=2, start=3)]
+        rows = list(calculate_motion([
+            observation(0, 10), observation(1, 10.1),
+            observation(3, 15, 2), observation(4, 15.1, 2),
+        ], manifest(), calibration(), bindings))
+        self.assertEqual({row["player_id"] for row in rows}, {"player"})
+        self.assertIsNone(rows[2]["distance_delta_m"])
+        self.assertNotEqual(rows[1]["segment_id"], rows[2]["segment_id"])
+        summary = summarize(rows, manifest(), bindings)
+        self.assertEqual(len(summary), 1)
+        self.assertAlmostEqual(summary[0]["valid_seconds"], 2 / 25)
+
     def test_unbound_and_jump_cannot_add_distance(self):
         rows = list(calculate_motion([observation(0, 10), observation(1, 20), observation(2, 20.1), observation(3, 21, 2)], manifest(), calibration(), [binding()]))
         self.assertEqual(rows[1]["reason"], "speed_jump")

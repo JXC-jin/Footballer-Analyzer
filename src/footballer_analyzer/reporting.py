@@ -17,11 +17,12 @@ from .storage import RowWriter, file_hash, new_id, read_json, read_rows, read_ya
 from .video import read_frames
 
 
-def draw_pitch(image, left, top, width, height):
+def draw_pitch(image, left, top, width, height, length_m, width_m):
     cv2.rectangle(image, (left, top), (left + width, top + height), (38, 75, 49), -1)
     cv2.rectangle(image, (left, top), (left + width, top + height), (170, 200, 180), 1)
     cv2.line(image, (left + width // 2, top), (left + width // 2, top + height), (170, 200, 180), 1)
-    cv2.ellipse(image, (left + width // 2, top + height // 2), (round(width * 9.15 / 105), round(height * 9.15 / 68)), 0, 0, 360, (170, 200, 180), 1)
+    radius_m = min(9.15, width_m / 5)
+    cv2.ellipse(image, (left + width // 2, top + height // 2), (round(width * radius_m / length_m), round(height * radius_m / width_m)), 0, 0, 360, (170, 200, 180), 1)
 
 
 def render_review(run_dir, report_dir, manifest, calibration, bindings):
@@ -37,7 +38,7 @@ def render_review(run_dir, report_dir, manifest, calibration, bindings):
     try:
         for packet in read_frames(Path(manifest["config"]["video"]), manifest["start_frame"], manifest["end_frame"], manifest["config"]["stride"]):
             frame = packet.image
-            draw_pitch(frame, 20, 20, pitch_width, pitch_height)
+            draw_pitch(frame, 20, 20, pitch_width, pitch_height, calibration["pitch_length_m"], calibration["pitch_width_m"])
             for row in rows_by_frame[packet.frame_index]:
                 player_id, team_id, _, reason = resolve_identity(row, bindings)
                 if reason == "excluded":

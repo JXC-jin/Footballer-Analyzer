@@ -1,4 +1,3 @@
-from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -157,10 +156,10 @@ def handler_for(app):
                     static_path = WEB / static_paths[path]
                     return self.send_bytes(static_path.read_bytes(), (mimetypes.guess_type(static_path.name)[0] or "text/plain") + "; charset=utf-8")
                 self.send_json({"error": "页面不存在"}, 404)
-            except (ValueError, KeyError, TypeError, OSError) as error:
-                self.send_json({"error": str(error)}, 400)
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            except (ValueError, KeyError, TypeError, OSError) as error:
+                self.send_json({"error": str(error)}, 400)
 
         def do_POST(self):
             try:
