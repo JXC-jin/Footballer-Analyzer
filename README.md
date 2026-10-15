@@ -1,78 +1,107 @@
 # FootballerAnalyzer
 
-基于摄像头的足球数据分析平台。
+基于固定机位视频的足球球员追踪、场地投影与跑动分析原型。
 
-**当前阶段**：调研 ✅ → 需求 ✅ → 选型 ✅ → **设计 📝 最小闭环草案待评审** → 开发 ⬜
+**当前阶段**：调研、需求、选型与设计已完成；最小闭环原型已实现。实片追踪与前端对拍已验证，距离精度仍待独立参考路程验证。
 
-## 📌 文档入口
+## 现在可以做什么
 
-**[docs/README.md](docs/README.md)** —— 文档索引：每份文档的价值、主要内容、阅读路径与维护约定。
+- YOLOv8n 人物检测、ByteTrack 跟踪、球衣颜色分组，缓存原始像素轨迹。
+- 浏览器同帧展示原图检测框、脚点与球场投影；支持播放、逐帧、源帧跳转和联动选择。
+- 点选场地对应点和可靠区域，检查白线叠加；保存草稿或确认标定。
+- 建立持久球员档案，按源帧区间绑定、拆分或排除轨迹。
+- 重算距离、速度、有效时间和热图，导出 HTML、叠加视频与 Parquet；查询选定报告中的球员历史。
 
-**[07 架构设计与最小闭环](docs/07-架构设计与最小闭环.md)** —— 当前设计草案：视频 → 跟踪缓存 → 人工标定与身份确认 → 跑动报告 → 修正重算与跨场查询。
+## 快速开始（Windows / PowerShell）
 
-## 三条最重要的调研结论（TL;DR）
-
-1. **参考项目 `abdullahtarek/football_analysis` 只能当读物**：单应性 4 点硬编码、fps 写死 24、球不跟踪、无身份保持、**无 LICENSE**。流水线概念对，实现全要重写。
-2. **没有任何开源项目能直接变成平台**：现成的只有零件（MIT 的 `roboflow/sports` 标定+分队、`torchreid` 特征、`sn-trackeval` 评测）；**事件层、身份层、数据层、服务层是公开空白**，必须自研。
-3. **本机（无独显）够用**：整场 90 分钟 1080p 逐帧约 3.8 小时、抽帧约 1.1 小时；检测走 ONNX Runtime **DirectML（核显 Radeon 780M）比 CPU 快 2.3×**。实时不行，离线没问题。
-
-## 目录结构
-
-```
-FootballerAnalyzer/
-├── docs/
-│   ├── README.md                            # ★ 文档索引（从这里进）
-│   ├── 00-总报告-调研结论.md                 # ★ 主文档：能不能做、坑在哪
-│   ├── 01-参考仓库清单与许可.md              # 23 个仓库的许可与可用度评级
-│   ├── 02-本机实测数据.md                    # 本机基准测试与结论
-│   ├── 03-核心源码审计与可复用清单.md         # 逐项目审计：哪段能抄、哪段必坏（带行号）
-│   ├── 04-主干选型清单.md                    # ✅ 已定稿：D0–D13 十四个决策点（效率优先）
-│   ├── 05-需求确认单.md                      # 已填写：6 条必答 + 5 条选答
-│   ├── 06-需求回执与范围确认.md               # 需求解读 + 机位实测硬约束 + 范围砍法
-│   ├── 07-架构设计与最小闭环.md               # 📝 设计草案：模块、数据、操作、验收与工作包
-│   ├── 10-技术调研-SOTA与数据集.md           # 学术 SOTA / 数据集 / 关键论文
-│   ├── 11-从轨迹到统计指标.md                # 跑动/速度/控球/传球的算法与坑
-│   ├── 12-硬件与部署调研.md                  # 摄像机选型 / 标定误差 / 造价
-│   └── bench/                               # 基准测试原始 JSON
-├── scripts/
-│   ├── clone_refs.ps1                       # 浅克隆全部参考仓库到 third_party/
-│   ├── setup_bench_env.ps1                  # 一键建立 .venv 基准环境
-│   ├── bench_cpu.py                         # 检测/光流/ONNX-DirectML 基准
-│   ├── bench_pipeline.py                    # 端到端吞吐基准（含 ByteTrack）
-│   └── inspect_clip.py                      # 素材体检（镜头运动、球员尺寸）
-├── data/clips/                              # 本地视频素材与预览图（★ 已 gitignore）
-├── third_party/                             # 23 个参考仓库源码（★ 已 gitignore，不入库）
-├── models/                                  # 模型权重（★ 已 gitignore）
-└── .venv/                                   # 本地 Python 环境（★ 已 gitignore）
-```
-
-## 快速开始
+在项目根目录执行，推荐 Python 3.12；本机已建好的 `.venv` 可直接复用。
 
 ```powershell
-# 1) 建立基准环境（约 200 MB 下载：torch CPU + ultralytics + onnxruntime-directml）
-& .\scripts\setup_bench_env.ps1
-
-# 2) 复现本机基准数据
-& .\.venv\Scripts\python.exe .\scripts\bench_cpu.py --frames 20
-& .\.venv\Scripts\python.exe .\scripts\bench_pipeline.py --frames 300 --imgsz 640
-
-# 3) 需要时重新克隆参考仓库（已存在会跳过）
-& .\scripts\clone_refs.ps1
+python -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install --upgrade pip
+& .\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+& .\.venv\Scripts\python.exe -m pip install -e . -c configs/constraints-tested.txt
 ```
 
-## 关于第三方源码与素材
+已安装本项目时，可直接从这里开始：
 
-`third_party/` 下是 23 个浅克隆的调研用仓库（约 1.9 GB），**已在 `.gitignore` 中排除，不会上传**。
-各仓库版权与许可归原作者所有，本目录仅用于本地阅读与对照，许可条款参见 [docs/01](docs/01-参考仓库清单与许可.md) —— 其中 `ultralytics` 与 `boxmot` 是 AGPL-3.0，`sn-gamestate`/`sportslabkit` 是 GPL-3.0，商用前务必确认。
+```powershell
+# 视频与模型为本地文件，首次在新机器上使用时需要自行准备
+# 默认：data/clips/goodview_static_5s.mp4 和 models/yolov8n.pt
+& .\.venv\Scripts\python.exe -m footballer_analyzer track --config configs/demo.yaml
 
-`.gitignore` 同时排除了：模型权重（`*.pt/*.onnx/...`）、视频与数据集、虚拟环境、密钥，以及**含第三方版权画面的参考截图**（`docs/image.png`、`docs/bench/*.png` —— 本仓库为 public，这些图仅本地保留）。
+# 跟踪成功后，选择刚生成的运行目录
+$runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name -Descending | Select-Object -First 1).FullName
 
-## 阶段状态
+# 只适用于同名演示素材；未确认的粗选点不能作为精度依据
+& .\.venv\Scripts\python.exe -m footballer_analyzer calibrate --run $runDir --points configs/calibration_demo.yaml
 
-| 阶段 | 状态 | 说明 |
-|---|---|---|
-| 调研 | ✅ 完成 | [00](docs/00-总报告-调研结论.md) 总报告 + [01](docs/01-参考仓库清单与许可.md)/[02](docs/02-本机实测数据.md)/[03](docs/03-核心源码审计与可复用清单.md) + 专题 [10](docs/10-技术调研-SOTA与数据集.md)/[11](docs/11-从轨迹到统计指标.md)/[12](docs/12-硬件与部署调研.md) |
-| 需求 | ✅ 完成 | [05 需求确认单](docs/05-需求确认单.md)（已填写）、[06 需求回执与范围确认](docs/06-需求回执与范围确认.md) |
-| 选型 | ✅ 完成 | [04 主干选型决策](docs/04-主干选型清单.md)：D0–D13 已定稿（效率优先原则）；测试素材已就位 |
-| 设计 | 📝 草案待评审 | [07 架构设计与最小闭环](docs/07-架构设计与最小闭环.md)：模块、文件数据模型、接口、指标口径、验收与五天工作包 |
-| 开发 | ⬜ 未开始 | 素材已就位（`data/clips/`，本地不入库）；评审后从跟踪骨架开工 |
+& .\.venv\Scripts\python.exe -m footballer_analyzer serve --port 8765
+```
+
+打开 **[http://127.0.0.1:8765/](http://127.0.0.1:8765/)**。服务按 `Ctrl+C` 停止；换用其他输出目录时加 `serve --output-root <目录>`。视频、模型、球员档案与分析产物保存在本机，未纳入 Git。
+
+### 前端操作顺序
+
+1. 左侧选择运行；点击列表、图像中的球员框或球场圆点，联动核对相同轨迹 ID。
+2. 用上一帧、下一帧、滑条或输入源帧号后点击“跳转”定位。预览最高 10 FPS；源帧号与原始时间保持一致。
+3. 在“场地标定”填写实际尺寸，在同一参考帧点选至少 4 对非共线点（建议 6–12 对），填写对应米制坐标；按顺序点选可靠地面区域。
+4. 保存草稿，检查首、中、末帧白线叠加、尺寸与可靠区域。切镜或机位漂移应缩短窗口并重新分析。确认检查后再勾选标定确认；草稿允许位置预览，但阻止距离报告。
+5. 在“身份与轨迹”建立球员档案并绑定区间。同一人断轨后把新 ID 绑定到同一档案；同 ID 换人时分别绑定不同区间；裁判或场外人员可以排除。编辑已有绑定时先移除原条目，再保存替代区间。
+6. 在“跑动统计”点击“生成 / 重算报告”；点击统计行查看速度与热图，打开完整报告下载叠加视频和数据。修改绑定或标定后会提示旧报告过期，重算保留历史版本。
+7. “导出对拍图”生成当前帧的画面与球场并排 PNG，再点“保存 PNG”。
+
+`track_id` 只在一次运行内有效，`player_id` 才是跨场身份；`home/away` 为人工确认的本场队伍，颜色簇不自动代表真实主客队。帧区间均为左闭右开 `[start_frame, end_frame)`。
+
+### CLI 报告与历史
+
+```powershell
+# 需已确认标定并至少绑定一名球员
+& .\.venv\Scripts\python.exe -m footballer_analyzer report --run $runDir
+
+# 显式指定每段素材要采用的报告版本
+& .\.venv\Scripts\python.exe -m footballer_analyzer history --player player_001 --reports outputs/run_.../reports/report_...
+```
+
+`history --reports` 可接受多个报告目录，同一片段只选一个版本。重叠片段会被拒绝；同场片段偏移未知时只逐片展示。显示的是“已分析片段累计”，不外推整场跑动。
+
+## 产物与结构
+
+```text
+configs/                         演示配置、标定点、验证过的依赖版本约束
+src/footballer_analyzer/          CLI、检测跟踪、标定、身份、统计、报告、本地服务
+src/footballer_analyzer/web/      原生 HTML/CSS/JavaScript 前端，无额外构建步骤
+tests/                           时间、分段、身份、重算与 HTTP 边界测试
+outputs/run_*/
+  manifest.json                  源文件摘要、帧率、配置、依赖、状态与耗时
+  tracks.parquet / tracks.mp4     原始观测与轨迹预览
+  catalog.json / crops/           轨迹目录与缩略图
+  track_catalog.html              可直接打开的缩略图索引
+  calibration.yaml               标定、适用范围与确认状态
+  bindings.yaml                  本次运行的身份和排除区间
+  reports/report_*/              独立版本的统计、图表、视频、HTML 与输入快照
+data/players.yaml                跨场球员档案（首次从前端创建）
+```
+
+## 验证与当前限制
+
+```powershell
+& .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+node --check src/footballer_analyzer/web/app.js
+```
+
+本轮 **11 项测试通过**。真实 5 秒素材：1080p25、125 帧、1614 条观测、35 条轨迹，跟踪阶段约 10.7 秒（含预采样与产物输出，不含 Python 启动导入）。详细证据见 [08 实现与验收记录](docs/08-实现与验收记录.md)。
+
+当前使用 CPU 检测；调研中的 DirectML 尚未接入本原型。短片可用于检查链路，未证明长片吞吐、跟踪准确率或 ±10% 距离误差。现有模型仍有漏检、断轨和换 ID；报告仅统计可靠区域内的连续有效观测，缺口不插值。首版仅支持恒定帧率、单个固定机位窗口，不包含球、事件、自动 ReID、多摄融合或实时服务。
+
+## 文档与调研工具
+
+- [文档索引](docs/README.md)：需求、选型、调研与专题报告。
+- [07 架构设计与最小闭环](docs/07-架构设计与最小闭环.md)：两阶段流水线、数据约束、指标口径与验收标准。
+- [08 实现与验收记录](docs/08-实现与验收记录.md)：已实现能力、复现命令、实测与未通过项。
+- `scripts/setup_bench_env.ps1`、`bench_cpu.py`、`bench_pipeline.py`：原调研基准工具，不替代上面的应用安装步骤。
+- `scripts/inspect_clip.py`：素材体检；`scripts/clone_refs.ps1`：本地获取参考源码。
+
+## 第三方源码与素材
+
+`third_party/`、`data/`、`models/`、`outputs/`、虚拟环境及第三方版权截图均已被 `.gitignore` 排除。仓库不包含视频或模型权重，请使用有权使用的本地素材。第三方许可见 [01 仓库清单与许可](docs/01-参考仓库清单与许可.md)；当前检测依赖 Ultralytics（AGPL-3.0），沿用调研阶段的许可约束。
