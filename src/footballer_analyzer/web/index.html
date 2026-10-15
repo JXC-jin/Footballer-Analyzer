@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Touchline · 球员追踪实验台</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-icon">◎</span><span>TOUCHLINE<small>FOOTBALL ANALYZER</small></span></a>
+    <div class="workspace-label">分析工作区</div>
+    <div class="nav-active"><span>◈</span> 追踪与位置校验 <span class="nav-badge">LAB</span></div>
+    <div class="sidebar-section"><span>当前运行</span><span id="run-status" class="tiny-dot">本地</span></div>
+    <select id="run-select" aria-label="选择分析运行"><option>正在加载…</option></select>
+    <button id="reload" class="quiet wide">↻ 刷新数据</button>
+    <div class="sidebar-section"><span>当前画面中的轨迹</span><span id="visible-count">0</span></div>
+    <div id="track-list" class="track-list"><p class="muted">尚无轨迹</p></div>
+    <div class="sidebar-footer"><span class="online-dot"></span> 本地离线分析<small>点击轨迹，联动检查画面与球场位置</small></div>
+  </aside>
+
+  <main>
+    <header class="page-header"><div><div class="eyebrow">TRACKING WORKSPACE <span>/</span> 01</div><h1>球员追踪与位置校验</h1><p id="source-description">用同一帧核对原始画面、追踪身份与球场投影。</p></div><div class="header-tags"><span class="tag">CPU · 离线</span><span class="tag live"><span class="online-dot"></span> 本地工作区</span></div></header>
+    <div id="notice" class="notice" role="status">正在读取运行数据…</div>
+
+    <section class="stat-grid" aria-label="运行概况">
+      <article class="stat"><span>本帧观测</span><strong id="stat-observations">—</strong><small>仅显示真实检测匹配</small></article>
+      <article class="stat"><span>当前已绑定</span><strong id="stat-bound">—</strong><small>轨迹 ID 与持久球员身份分离</small></article>
+      <article class="stat"><span>场地投影</span><strong id="stat-calibration">未标定</strong><small id="calibration-detail">需要图像点与米制点对应</small></article>
+      <article class="stat"><span>分析窗口</span><strong id="stat-duration">—</strong><small id="stat-frame-info">源帧号与时间保持一致</small></article>
+    </section>
+
+    <section class="viewer-grid">
+      <article class="panel video-panel">
+        <div class="panel-heading"><div><span class="panel-icon">▣</span><h2>原始画面与追踪</h2><span id="video-spec" class="subtle">SOURCE</span></div><label class="check-inline"><input id="show-boxes" type="checkbox" checked> 检测框</label></div>
+        <div class="video-surface"><canvas id="video-canvas" width="1920" height="1080" aria-label="原视频逐帧画面与球员检测框"></canvas><span class="video-label" id="frame-label">FRAME —</span><span class="video-caption">点击球员框可选中</span></div>
+        <div class="transport"><button id="previous-frame" title="上一采样帧" aria-label="上一帧">↤</button><button id="play" class="play-button" aria-label="播放">▶</button><button id="next-frame" title="下一采样帧" aria-label="下一帧">↦</button><span id="time-label" class="time-label">0.00 / 0.00 s</span><input id="frame-slider" type="range" min="0" max="1" value="0" aria-label="源视频帧号"><select id="playback-rate" aria-label="预览速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select></div>
+        <div class="panel-foot"><span><i class="legend-dot home"></i> home / 颜色簇 A <i class="legend-dot away"></i> away / 颜色簇 B <i class="legend-dot unknown"></i> 未确认</span><span>预览最高 10 FPS · 按钮逐采样帧检查</span></div>
+      </article>
+
+      <article class="panel pitch-panel">
+        <div class="panel-heading"><div><span class="panel-icon">⌖</span><h2>球场位置</h2></div><span id="pitch-mode" class="mini-tag">等待标定</span></div>
+        <div class="pitch-surface"><svg id="pitch" viewBox="-5 -5 115 78" role="img" aria-label="同帧球员在球场上的投影位置"></svg></div>
+        <div class="pitch-legend"><span><i class="legend-ring"></i> 空心点：区域外或身份未确认</span><span>数字与原图轨迹 ID 对应</span></div>
+        <div class="selection-card"><span class="eyebrow">SELECTED PLAYER</span><h3 id="selected-name">选择一名球员</h3><div class="selection-values"><div><small>轨迹 ID</small><strong id="selected-id">—</strong></div><div><small>球场坐标 · m</small><strong id="selected-position">—</strong></div></div><p id="selected-reason">从画面、场地圆点或左侧列表选择。</p></div>
+      </article>
+    </section>
+
+    <section class="panel tools-panel">
+      <div class="tool-tabs" role="tablist" aria-label="分析工具"><button class="active" role="tab" aria-selected="true" data-tab="identity">01 身份与轨迹</button><button role="tab" aria-selected="false" data-tab="calibration">02 场地标定</button><button role="tab" aria-selected="false" data-tab="statistics">03 跑动统计</button></div>
+      <div id="identity-tab" class="tab-content">
+        <div class="tool-intro"><div><h2>把轨迹绑定到球员</h2><p>同一个人断轨后可绑定新 ID；ID 中途换人时，按帧区间分别绑定。</p></div><span class="mini-tag">不自动猜测身份</span></div>
+        <div class="identity-grid"><form id="player-form" class="inset"><h3>球员档案</h3><label>球员 ID<input id="player-id" placeholder="player_001" required maxlength="64" pattern="[A-Za-z0-9_-]+"></label><label>显示姓名<input id="player-name" placeholder="球员姓名或内部代号" required maxlength="80"></label><button class="secondary" type="submit">保存档案</button><p class="hint">同一 ID 可跨比赛复用。</p></form><form id="binding-form" class="inset"><h3>绑定选中轨迹</h3><div class="form-row"><label>轨迹 ID<input id="binding-track" type="number" min="1" required></label><label>球员<select id="binding-player" required></select></label><label>球队<select id="binding-team"><option value="home">home / 主队</option><option value="away">away / 客队</option><option value="unknown">待确认</option></select></label></div><div class="form-row"><label>起始源帧（含）<input id="binding-start" type="number" min="0" required></label><label>结束源帧（不含）<input id="binding-end" type="number" min="1" required></label></div><div class="button-row"><button class="primary" type="submit">保存区间绑定</button><button class="quiet" id="exclude-track" type="button">将此区间排除</button></div></form></div>
+        <div class="table-wrap"><table><thead><tr><th>轨迹</th><th>源帧区间</th><th>球员</th><th>球队 / 状态</th><th></th></tr></thead><tbody id="binding-table"></tbody></table></div>
+      </div>
+
+      <div id="calibration-tab" class="tab-content" hidden>
+        <div class="tool-intro"><div><h2>将图像脚点投影到米制场地</h2><p>在同一参考帧点选至少四个分布良好的球场点，填写对应米制坐标。保存草稿即可预览投影。</p></div><button id="point-mode" class="secondary">开始点选图像点</button></div>
+        <div class="calibration-grid"><div><div class="form-row"><label>球场长度 · m<input id="pitch-length" type="number" value="105" min="1" step="0.01"></label><label>球场宽度 · m<input id="pitch-width" type="number" value="68" min="1" step="0.01"></label><label>下一点 x · m<input id="target-x" type="number" value="52.5" step="0.01"></label><label>下一点 y · m<input id="target-y" type="number" value="0" step="0.01"></label></div><div class="table-wrap calibration-points"><table><thead><tr><th>点</th><th>图像 x / y · px</th><th>球场 x / y · m</th><th></th></tr></thead><tbody id="calibration-points"></tbody></table></div><div class="button-row"><button id="save-calibration" class="primary">保存标定</button><button id="clear-points" class="quiet">清空点选草稿</button></div></div><div class="inset"><h3>有效性检查</h3><label>参考源帧<input id="calibration-reference" type="number" min="0" value="0"></label><div class="form-row"><label>有效起始帧<input id="calibration-start" type="number" min="0"></label><label>有效结束帧<input id="calibration-end" type="number" min="1"></label></div><label class="check-block"><input id="calibration-reviewed" type="checkbox"><span>已检查首、中、末帧的白线叠加、场地尺寸和可靠区域</span></label><p class="hint">修改对应点、区间或场地尺寸会取消确认。未确认草稿只用于位置预览，不生成距离报告。默认可靠区域是标定点的凸包；已有演示配置保留其区域。</p><p class="hint" id="calibration-fit">尚无拟合结果。</p></div></div>
+      </div>
+
+      <div id="statistics-tab" class="tab-content" hidden><div class="tool-intro"><div><h2>可靠观测范围内的跑动统计</h2><p>缺失和异常跳变处切段，先平滑再计算距离；覆盖比例以分析窗口时长为分母。</p></div><div class="button-row"><a id="open-report" class="quiet" target="_blank" rel="noopener" hidden>查看完整报告 ↗</a><button id="generate-report" class="primary">生成 / 重算报告</button></div></div><p id="report-note" class="hint">完成场地标定确认和球员绑定后，即可生成报告。</p><div class="table-wrap"><table><thead><tr><th>球员</th><th>已观测距离</th><th>有效时间</th><th>窗口覆盖</th><th>平均速度</th></tr></thead><tbody id="statistics-table"></tbody></table></div><div id="player-chart"></div><p class="hint">结果仅代表已分析片段。±10% 精度尚未通过独立路程验证。</p></div>
+    </section>
+    <footer class="page-footer"><span>TOUCHLINE / TRACKING LAB</span><span>逐帧观测 · 人工校正 · 可复查的统计</span></footer>
+  </main>
+</body>
+</html>
