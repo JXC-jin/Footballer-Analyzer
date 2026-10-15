@@ -1,0 +1,28 @@
+{
+  "video": "D:\\FootballerAnalyzer\\data\\clips\\goodview_15s.mp4",
+  "camera": {
+    "resolution": "1920x1080",
+    "fps": 25.0,
+    "frames": 502,
+    "duration_s": 20.1,
+    "sampled_pairs": 188,
+    "per_frame_shift_px_median": 2.957,
+    "per_frame_shift_px_p90": 9.47,
+    "cumulative_drift_px": 1428.0,
+    "zoom_per_frame_median": 0.00037,
+    "rotation_deg_per_frame_median": 0.0181,
+    "residual_after_translation_median": 0.2023,
+    "total_rotation_deg": 6.07
+  },
+  "players": {
+    "sampled_frames": 38,
+    "persons_per_frame_mean": 17.9,
+    "persons_per_frame_min": 10,
+    "persons_per_frame_max": 25,
+    "bbox_h_median_px": 68.0,
+    "bbox_h_p10_px": 49.0,
+    "bbox_h_min_px": 32.0,
+    "frac_h_ge_30px": 1.0,
+    "sports_ball_frames": 1
+  }
+}
