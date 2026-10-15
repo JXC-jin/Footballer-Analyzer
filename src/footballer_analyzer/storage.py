@@ -19,6 +19,8 @@ TRACK_SCHEMA = pa.schema([
     ("confidence", pa.float64()), ("class_id", pa.int64()), ("team_id", pa.string()),
 ])
 
+DETECTION_SCHEMA = pa.schema([field for field in TRACK_SCHEMA if field.name not in {"track_id", "team_id"}])
+
 
 def new_id(prefix):
     """返回由前缀、UTC 时间和随机后缀组成的产物标识。"""

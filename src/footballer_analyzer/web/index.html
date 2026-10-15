@@ -33,10 +33,11 @@
 
     <section class="viewer-grid">
       <article class="panel video-panel">
-        <div class="panel-heading"><div><span class="panel-icon">▣</span><h2>原始画面与追踪</h2><span id="video-spec" class="subtle">SOURCE</span></div><div class="viewer-actions"><button id="export-frame" class="quiet">导出对拍图</button><a id="export-download" hidden>保存 PNG</a><label class="check-inline"><input id="show-boxes" type="checkbox" checked> 检测框</label></div></div>
+        <div class="panel-heading"><div><span class="panel-icon">▣</span><h2>原始画面与追踪</h2><span id="video-spec" class="subtle">SOURCE</span></div><div class="viewer-actions"><button id="export-frame" class="quiet">导出对拍图</button><a id="export-download" hidden>保存 PNG</a><label class="check-inline"><input id="show-boxes" type="checkbox" checked> 追踪框</label><label class="check-inline"><input id="show-unmatched" type="checkbox"> 未关联检测</label></div></div>
         <div class="video-surface"><canvas id="video-canvas" width="1920" height="1080" aria-label="原视频逐帧画面与球员检测框"></canvas><span class="video-label" id="frame-label">FRAME —</span><span class="video-caption">点击球员框可选中</span></div>
         <div class="transport"><button id="previous-frame" title="上一采样帧" aria-label="上一帧">↤</button><button id="play" class="play-button" aria-label="播放">▶</button><button id="next-frame" title="下一采样帧" aria-label="下一帧">↦</button><span id="time-label" class="time-label">0.00 / 0.00 s</span><input id="frame-slider" type="range" min="0" max="1" value="0" aria-label="源视频帧号"><input id="frame-number" type="number" value="0" min="0" aria-label="跳转源帧"><button id="jump-frame">跳转</button><select id="playback-rate" aria-label="预览速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select></div>
         <div class="panel-foot"><span><i class="legend-dot home"></i> home / 颜色簇 A <i class="legend-dot away"></i> away / 颜色簇 B <i class="legend-dot unknown"></i> 未确认</span><span>预览最高 10 FPS · 按钮逐采样帧检查</span></div>
+        <div class="panel-foot" id="detection-summary">原始检测信息尚未加载</div>
       </article>
 
       <article class="panel pitch-panel">

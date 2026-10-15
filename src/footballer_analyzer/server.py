@@ -46,15 +46,16 @@ class ReviewApp:
         return entries
 
     def data(self, run_id):
-        """返回已完成运行的轨迹、编辑输入和最新完成报告，并标记报告是否过期。"""
+        """返回完成运行的检测、轨迹与复盘输入；旧运行的检测缓存为空值。"""
         run_dir = self.run_dir(run_id)
         manifest = read_json(run_dir / "manifest.json")
         if manifest["status"] != "complete":
             raise ValueError("该运行未完成，请查看运行清单中的错误")
         tracks_path = run_dir / "tracks.parquet"
-        cache_key = (run_id, tracks_path.stat().st_mtime_ns)
+        detections_path = run_dir / "detections.parquet"
+        cache_key = (run_id, tracks_path.stat().st_mtime_ns, detections_path.stat().st_mtime_ns if detections_path.exists() else None)
         if cache_key not in self.track_cache:
-            self.track_cache = {cache_key: list(read_rows(tracks_path))}
+            self.track_cache = {cache_key: {"tracks": list(read_rows(tracks_path)), "detections": list(read_rows(detections_path)) if detections_path.exists() else None}}
         players = load_players(Path(manifest["config"]["players"]))
         bindings = read_yaml(run_dir / "bindings.yaml", {"run_id": run_id, "bindings": []})
         calibration = load_calibration(run_dir)
@@ -73,7 +74,7 @@ class ReviewApp:
                 "stale": report_manifest["bindings"] != bindings or report_manifest["calibration"] != calibration or report_manifest["players"] != list(players.values()),
                 "motion": list(read_rows(report_dir / "motion.parquet")),
             }
-        return {"manifest": manifest, "tracks": self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "reports": reports, "latest_report": latest}
+        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "reports": reports, "latest_report": latest}
 
     def save_bindings(self, run_id, payload):
         """校验整份身份区间后原子保存，返回保存状态；冲突或越界时抛错。"""

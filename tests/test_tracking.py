@@ -1,14 +1,18 @@
 """验证低分关联、缓冲恢复及空帧语义，防止丢失后无故换号。"""
 
 import unittest
+import tempfile
 from unittest.mock import Mock, patch
 from pathlib import Path
 
 import numpy as np
+import cv2
 import supervision as sv
 
-from footballer_analyzer.config import config_from_dict
+from footballer_analyzer.config import Config, config_from_dict
 from footballer_analyzer.detection import YoloDetector
+from footballer_analyzer.pipeline import track
+from footballer_analyzer.storage import read_json, read_rows
 from footballer_analyzer.tracking import ByteTracker
 
 
@@ -81,6 +85,31 @@ class TrackingTests(unittest.TestCase):
         for key, invalid in [("nms_iou", 1), ("nms_iou", float("nan")), ("lost_track_buffer_s", 0), ("minimum_matching_threshold", -1), ("track_activation_threshold", 0.1), ("track_activation_threshold", 0.9)]:
             with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
                 config_from_dict({**payload, key: invalid})
+
+    def test_pipeline_preserves_unmatched_detections_without_filling_gaps(self):
+        """缓存低分噪声供复查；缺帧不伪造轨迹，恢复观测沿用原编号。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            video_path = root / "source.avi"
+            video_writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"MJPG"), 25, (64, 48))
+            for frame_index in range(4):
+                video_writer.write(np.full((48, 64, 3), frame_index * 20, dtype=np.uint8))
+            video_writer.release()
+            weights = root / "unused.pt"
+            weights.write_bytes(b"mock local weights")
+            strong = people([[10, 5, 25, 40]], [0.9])
+            first = people([[10, 5, 25, 40], [40, 5, 55, 40]], [0.9, 0.15])
+            low = people([[10, 5, 25, 40], [40, 5, 55, 40]], [0.15, 0.15])
+            noise = people([[40, 5, 55, 40]], [0.15])
+            with patch("footballer_analyzer.pipeline.YoloDetector") as detector_type:
+                detector_type.return_value.detect.side_effect = [strong, first, low, noise, strong]
+                run_dir = track(Config(video_path, weights, root, root / "players.yaml", "test", "test"))
+            raw_rows = list(read_rows(run_dir / "detections.parquet"))
+            track_rows = list(read_rows(run_dir / "tracks.parquet"))
+            self.assertEqual(len(raw_rows), 6)
+            self.assertEqual([row["frame_index"] for row in track_rows], [0, 1, 3])
+            self.assertEqual(len({row["track_id"] for row in track_rows}), 1)
+            self.assertEqual(read_json(run_dir / "manifest.json")["detection_count"], 6)
 
 
 if __name__ == "__main__":

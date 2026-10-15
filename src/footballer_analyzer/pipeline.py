@@ -1,4 +1,4 @@
-"""编排跟踪阶段：读取配置、采样分队、持续关联目标，保存原始轨迹与复查产物。"""
+"""编排跟踪阶段：读取配置、采样分队、持续关联目标，分别缓存检测与原始轨迹。"""
 
 from pathlib import Path
 import html
@@ -8,7 +8,7 @@ import cv2
 
 from .config import Config
 from .detection import YoloDetector
-from .storage import TRACK_SCHEMA, RowWriter, file_hash, new_id, versions, write_json, write_yaml
+from .storage import DETECTION_SCHEMA, TRACK_SCHEMA, RowWriter, file_hash, new_id, versions, write_json, write_yaml
 from .tracking import ByteTracker
 from .teams import TeamClassifier, shirt_feature
 from .video import inspect_video, read_frames
@@ -55,10 +55,22 @@ def track(config: Config) -> Path:
             raise ValueError("无法创建轨迹预览视频")
         catalog = {}
         processed = 0
+        detection_count = 0
+        observation_count = 0
         try:
-            with RowWriter(run_dir / "tracks.parquet", TRACK_SCHEMA) as writer:
+            with RowWriter(run_dir / "tracks.parquet", TRACK_SCHEMA) as writer, RowWriter(run_dir / "detections.parquet", DETECTION_SCHEMA) as detection_writer:
                 for packet in read_frames(config.video, config.start_frame, end_frame, config.stride):
-                    detections = tracker.update(detector.detect(packet.image), packet.timestamp_s)
+                    raw_detections = detector.detect(packet.image)
+                    for detection_index, box in enumerate(raw_detections.xyxy):
+                        detection_writer.append({
+                            "frame_index": packet.frame_index, "timestamp_s": packet.timestamp_s,
+                            "bbox_x1": float(box[0]), "bbox_y1": float(box[1]),
+                            "bbox_x2": float(box[2]), "bbox_y2": float(box[3]),
+                            "confidence": float(raw_detections.confidence[detection_index]), "class_id": 0,
+                        })
+                    detection_count += len(raw_detections)
+                    detections = tracker.update(raw_detections, packet.timestamp_s)
+                    observation_count += len(detections)
                     annotated = packet.image.copy()
                     for detection_index, box in enumerate(detections.xyxy):
                         track_id = int(detections.tracker_id[detection_index])
@@ -91,7 +103,7 @@ def track(config: Config) -> Path:
         cards = "".join(f'<article><img src="crops/{entry["track_id"]}.jpg" alt="轨迹缩略图"><h2>#{entry["track_id"]}</h2><p>帧 {entry["start_frame"]}–{entry["end_frame"]} · {entry["observations"]} 次观测</p></article>' for entry in catalog.values())
         (run_dir / "track_catalog.html").write_text(f'<!doctype html><meta charset="utf-8"><title>轨迹目录</title><style>body{{font-family:system-ui;background:#102026;color:#eee}}main{{display:flex;flex-wrap:wrap;gap:16px}}article{{padding:16px;background:#1e343c}}img{{height:120px}}</style><h1>{html.escape(run_dir.name)}</h1><p>轨迹号仅在本次运行中有效。使用调试台绑定真实身份。</p><main>{cards}</main>', encoding="utf-8")
         write_yaml(run_dir / "bindings.yaml", {"run_id": run_dir.name, "bindings": []})
-        manifest.update(status="complete", processed_frames=processed, track_count=len(catalog), elapsed_s=round(time.perf_counter() - started, 3))
+        manifest.update(status="complete", processed_frames=processed, track_count=len(catalog), detection_count=detection_count, observation_count=observation_count, elapsed_s=round(time.perf_counter() - started, 3))
         write_json(run_dir / "manifest.json", manifest)
         print(f"[complete] {run_dir}", flush=True)
         return run_dir

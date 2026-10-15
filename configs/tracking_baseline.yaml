@@ -1,0 +1,13 @@
+video: data/clips/goodview_static_5s.mp4
+weights: models/yolov8n.pt
+output_root: outputs/tracking_baseline
+players: data/players.yaml
+match_id: sample_goodview
+clip_id: goodview_static_5s
+stride: 1
+imgsz: 640
+confidence: 0.25
+nms_iou: 0.7
+track_activation_threshold: 0.25
+lost_track_buffer_s: 1.0
+minimum_matching_threshold: 0.8

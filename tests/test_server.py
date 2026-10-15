@@ -12,11 +12,26 @@ import cv2
 import numpy as np
 
 from footballer_analyzer.server import ReviewApp, handler_for
+from footballer_analyzer.storage import DETECTION_SCHEMA, RowWriter, read_rows
 import test_reporting
 
 
 class ServerTests(unittest.TestCase):
     """本地复盘 API 的读操作与输入边界测试。"""
+
+    def test_detection_cache_is_optional_and_refreshes(self):
+        """旧运行返回未知检测缓存，缓存补齐后返回原始框且保留置信度。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir, manifest = test_reporting.ReportingTests().prepare_run(temporary)
+            app = ReviewApp(temporary)
+            self.assertIsNone(app.data(run_dir.name)["detections"])
+            raw_row = next(read_rows(run_dir / "tracks.parquet"))
+            raw_row["confidence"] = 0.15
+            with RowWriter(run_dir / "detections.parquet", DETECTION_SCHEMA) as writer:
+                writer.append(raw_row)
+            refreshed = app.data(run_dir.name)
+            self.assertEqual(refreshed["detections"][0]["confidence"], 0.15)
+            self.assertEqual(len(refreshed["tracks"]), 10)
 
     def test_local_api_frame_and_input_boundaries(self):
         """验证运行列表与 JPEG 帧可读，越界帧、非法路径、跨源写入和错误 Host 被拒绝。"""

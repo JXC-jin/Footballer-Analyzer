@@ -1,5 +1,5 @@
 const element = (id) => document.getElementById(id);
-const state = { runId: null, data: null, frame: 0, selected: null, image: null, playing: false, pointMode: false, roiMode: false, roi: [], points: [], requestId: 0, runRequestId: 0, frameRows: new Map(), motionRows: new Map(), draftDirty: false };
+const state = { runId: null, data: null, frame: 0, selected: null, image: null, playing: false, pointMode: false, roiMode: false, roi: [], points: [], requestId: 0, runRequestId: 0, frameRows: new Map(), detectionRows: new Map(), motionRows: new Map(), draftDirty: false };
 const colors = { home: "#28cfac", away: "#f9b26a", cluster_0: "#28cfac", cluster_1: "#f9b26a", unknown: "#a6b3b2" };
 const reasons = { unbound: "身份尚未确认", excluded: "人工排除", outside_roi: "超出可靠统计区域", outside_pitch: "投影超出球场", clipped_feet: "脚点被画面裁切", uncalibrated: "尚未标定", outside_calibration_window: "超出标定有效区间", invalid_projection: "投影无效", speed_jump: "异常速度跳变，已切段" };
 
@@ -123,11 +123,28 @@ function drawPitch(observations) {
   pitchShape("text", { x: 0, y: width + 2.8, fill: "#89a47e", "font-size": 1.7 }, `0,0  → x / ${length} × ${width} m`);
 }
 
+function detectionKey(row) {
+  return [row.bbox_x1, row.bbox_y1, row.bbox_x2, row.bbox_y2, row.confidence].join(":");
+}
+
 function drawVideo(observations) {
   const canvas = element("video-canvas");
   const context = canvas.getContext("2d");
   context.clearRect(0, 0, canvas.width, canvas.height);
   if (state.image) context.drawImage(state.image, 0, 0, canvas.width, canvas.height);
+  const rawDetections = state.detectionRows.get(state.frame) || [];
+  const matched = new Set(observations.map((observation) => detectionKey(observation.row)));
+  const unmatched = rawDetections.filter((row) => !matched.has(detectionKey(row)));
+  element("detection-summary").textContent = state.data.detections == null ? "旧运行没有原始检测缓存；重新执行 track 后可区分漏检与关联失败。" : `检测 ${rawDetections.length} · 已关联 ${observations.length} · 未关联 ${unmatched.length}（包含场外人员与噪声）。红色虚线：有检测但未形成轨迹；可见人物无任何框：检测阶段漏检。`;
+  if (element("show-unmatched").checked) {
+    context.strokeStyle = "#ff7575"; context.fillStyle = "#ff7575";
+    context.lineWidth = 2; context.setLineDash([6, 4]); context.font = "17px sans-serif";
+    for (const row of unmatched) {
+      context.strokeRect(row.bbox_x1, row.bbox_y1, row.bbox_x2 - row.bbox_x1, row.bbox_y2 - row.bbox_y1);
+      context.fillText(`未关联 ${row.confidence.toFixed(2)}`, row.bbox_x1, Math.max(18, row.bbox_y1 - 5));
+    }
+    context.setLineDash([]);
+  }
   const calibration = state.data.calibration;
   if (calibration && state.frame >= calibration.start_frame && state.frame < calibration.end_frame) {
     context.strokeStyle = "#d4eac488";
@@ -160,7 +177,7 @@ function drawVideo(observations) {
     context.strokeStyle = observation.reason === "excluded" ? "#fb7474" : observation.color;
     context.lineWidth = selected ? 5 : 2;
     context.strokeRect(row.bbox_x1, row.bbox_y1, row.bbox_x2 - row.bbox_x1, row.bbox_y2 - row.bbox_y1);
-    const label = `#${row.track_id}${observation.binding?.player_id ? ` · ${observation.binding.player_id}` : ""}`;
+    const label = `#${row.track_id}${observation.binding?.player_id ? ` · ${observation.binding.player_id}` : ""}${element("show-unmatched").checked ? ` ${row.confidence.toFixed(2)}` : ""}`;
     context.font = "19px sans-serif";
     const labelWidth = context.measureText(label).width + 12;
     context.fillStyle = selected ? "#f3ffed" : "#092d25dd";
@@ -324,8 +341,11 @@ async function loadRun(runId, preserve = false) {
   const data = await request(api());
   if (runRequestId !== state.runRequestId) return;
   state.data = data;
-  state.frameRows.clear(); state.motionRows.clear();
+  state.frameRows.clear(); state.detectionRows.clear(); state.motionRows.clear();
   for (const row of data.tracks) { if (!state.frameRows.has(row.frame_index)) state.frameRows.set(row.frame_index, []); state.frameRows.get(row.frame_index).push(row); }
+  for (const row of data.detections || []) { if (!state.detectionRows.has(row.frame_index)) state.detectionRows.set(row.frame_index, []); state.detectionRows.get(row.frame_index).push(row); }
+  element("show-unmatched").disabled = data.detections == null;
+  if (data.detections == null) element("show-unmatched").checked = false;
   for (const row of data.latest_report?.motion || []) state.motionRows.set(`${row.frame_index}:${row.track_id}`, row);
   const manifest = data.manifest;
   const calibration = data.calibration;
@@ -368,6 +388,7 @@ async function initialize() {
 element("run-select").addEventListener("change", () => loadRun(element("run-select").value).catch((error) => notify(error.message, true)));
 element("reload").addEventListener("click", () => initialize().catch((error) => notify(error.message, true)));
 element("show-boxes").addEventListener("change", draw);
+element("show-unmatched").addEventListener("change", draw);
 element("export-frame").addEventListener("click", async () => {
   if (!state.data || !state.image) return;
   stopPlayback();
