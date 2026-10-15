@@ -51,6 +51,8 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 6. 在“跑动统计”点击“生成 / 重算报告”；点击统计行查看速度与热图，打开完整报告下载叠加视频和数据。修改绑定或标定后会提示旧报告过期，重算保留历史版本。
 7. “导出对拍图”生成当前帧的画面与球场并排 PNG，再点“保存 PNG”。
 
+排查漏检时勾选“未关联检测”：红色虚线表示有检测但尚未形成轨迹，并显示本帧检测与关联数量。原始检测包括场外人员，不等于在场球员数；旧运行缺少检测缓存时需重新跑 `track`。
+
 `track_id` 只在一次运行内有效，`player_id` 才是跨场身份；`home/away` 为人工确认的本场队伍，颜色簇不自动代表真实主客队。帧区间均为左闭右开 `[start_frame, end_frame)`。
 
 ### 检测与跟踪参数
@@ -58,6 +60,8 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 演示配置现用 `imgsz: 1280`、`confidence: 0.1`、`nms_iou: 0.5`。检测下限和轨迹激活阈值分开：`0.1 < 分数 < 0.25` 的框参与已有轨迹的第二次关联，新建轨迹仍需达到 `0.35`，避免低分噪声直接创建编号。NMS 在跟踪前抑制重复人物框。
 
 `lost_track_buffer_s: 3.0` 按真实采样帧率换算丢失缓冲；`track_activation_threshold: 0.25` 与 `minimum_matching_threshold: 0.8` 可单独调整。缓冲保留关联状态，漏检帧仍没有真实观测，不能用来补算路程。修改参数后需要重新执行 `track`，新旧运行的编号不能直接互用。
+
+追踪精度优先时使用 `track --config configs/tracking_quality.yaml`（1920 输入）。人工抽样复查：`python scripts/review_tracking.py --run outputs/run_... --reference configs/tracking_review_demo.json`。对比与剩余串号见 [09 追踪丢失诊断与修复](docs/09-追踪丢失诊断与修复.md)。
 
 ### CLI 报告与历史
 
@@ -81,10 +85,12 @@ tests/                           时间、分段、身份、重算与 HTTP 边�
 outputs/run_*/
   manifest.json                  源文件摘要、帧率、配置、依赖、状态与耗时
   tracks.parquet / tracks.mp4     原始观测与轨迹预览
+  detections.parquet             关联前的检测框和分数，包含未关联框
   catalog.json / crops/           轨迹目录与缩略图
   track_catalog.html              可直接打开的缩略图索引
   calibration.yaml               标定、适用范围与确认状态
   bindings.yaml                  本次运行的身份和排除区间
+  diagnostics/                   人工抽样复查 JSON 与标框图（执行复查脚本后生成）
   reports/report_*/              独立版本的统计、图表、视频、HTML 与输入快照
 data/players.yaml                跨场球员档案（首次从前端创建）
 ```
@@ -96,7 +102,7 @@ data/players.yaml                跨场球员档案（首次从前端创建）
 node --check src/footballer_analyzer/web/app.js
 ```
 
-本轮 **11 项测试通过**。真实 5 秒素材：1080p25、125 帧、1614 条观测、35 条轨迹，跟踪阶段约 10.7 秒（含预采样与产物输出，不含 Python 启动导入）。详细证据见 [08 实现与验收记录](docs/08-实现与验收记录.md)。
+当前 **21 项测试通过**。真实 5 秒素材：1080p25、125 帧；1280 修复版 3545 条观测、约 16.9 秒，1920 精度版 4106 条观测、约 27.0 秒（含预采样与产物输出，不含 Python 启动导入）。五帧人工抽样共 105 人次，追踪观测由旧配置 44 次提升到精度版 103 次，仍有 3 次抽样编号变化。初版记录见 [08 实现与验收记录](docs/08-实现与验收记录.md)，当前证据与边界见 [09 追踪丢失诊断与修复](docs/09-追踪丢失诊断与修复.md)。
 
 当前使用 CPU 检测；调研中的 DirectML 尚未接入本原型。短片可用于检查链路，未证明长片吞吐、跟踪准确率或 ±10% 距离误差。现有模型仍有漏检、断轨和换 ID；报告仅统计可靠区域内的连续有效观测，缺口不插值。首版仅支持恒定帧率、单个固定机位窗口，不包含球、事件、自动 ReID、多摄融合或实时服务。
 
@@ -105,6 +111,7 @@ node --check src/footballer_analyzer/web/app.js
 - [文档索引](docs/README.md)：需求、选型、调研与专题报告。
 - [07 架构设计与最小闭环](docs/07-架构设计与最小闭环.md)：两阶段流水线、数据约束、指标口径与验收标准。
 - [08 实现与验收记录](docs/08-实现与验收记录.md)：已实现能力、复现命令、实测与未通过项。
+- [09 追踪丢失诊断与修复](docs/09-追踪丢失诊断与修复.md)：漏检与串号原因、参数对比、人工抽样及 ReID 后续方案。
 - `scripts/setup_bench_env.ps1`、`bench_cpu.py`、`bench_pipeline.py`：原调研基准工具，不替代上面的应用安装步骤。
 - `scripts/inspect_clip.py`：素材体检；`scripts/clone_refs.ps1`：本地获取参考源码。
 
