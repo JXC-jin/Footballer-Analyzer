@@ -24,8 +24,12 @@ class Config:
     start_frame: int = 0
     end_frame: int | None = None
     stride: int = 1
-    imgsz: int = 640
-    confidence: float = 0.25
+    imgsz: int = 1280
+    confidence: float = 0.1
+    nms_iou: float = 0.5
+    track_activation_threshold: float = 0.25
+    lost_track_buffer_s: float = 3.0
+    minimum_matching_threshold: float = 0.8
     pitch_length_m: float = 105.0
     pitch_width_m: float = 68.0
     speed_limit_mps: float = 12.0
@@ -69,6 +73,14 @@ def config_from_dict(payload: dict) -> Config:
             raise ValueError(f"{key} 必须为有限正数")
     if config.confidence >= 1:
         raise ValueError("confidence 必须小于 1")
+    for key in ["nms_iou", "minimum_matching_threshold"]:
+        value = getattr(config, key)
+        if not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value < 1:
+            raise ValueError(f"{key} 必须在 (0, 1) 内")
+    if not isinstance(config.track_activation_threshold, (int, float)) or not math.isfinite(config.track_activation_threshold) or not 0.1 < config.track_activation_threshold < 0.9:
+        raise ValueError("track_activation_threshold 必须在 (0.1, 0.9) 内")
+    if not isinstance(config.lost_track_buffer_s, (int, float)) or not math.isfinite(config.lost_track_buffer_s) or config.lost_track_buffer_s <= 0:
+        raise ValueError("lost_track_buffer_s 必须为有限正数")
     if not math.isfinite(config.filter_beta) or config.filter_beta < 0:
         raise ValueError("filter_beta 必须为有限非负数")
     if config.match_offset_s is not None and (not math.isfinite(config.match_offset_s) or config.match_offset_s < 0):

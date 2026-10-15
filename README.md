@@ -53,6 +53,12 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 
 `track_id` 只在一次运行内有效，`player_id` 才是跨场身份；`home/away` 为人工确认的本场队伍，颜色簇不自动代表真实主客队。帧区间均为左闭右开 `[start_frame, end_frame)`。
 
+### 检测与跟踪参数
+
+演示配置现用 `imgsz: 1280`、`confidence: 0.1`、`nms_iou: 0.5`。检测下限和轨迹激活阈值分开：`0.1 < 分数 < 0.25` 的框参与已有轨迹的第二次关联，新建轨迹仍需达到 `0.35`，避免低分噪声直接创建编号。NMS 在跟踪前抑制重复人物框。
+
+`lost_track_buffer_s: 3.0` 按真实采样帧率换算丢失缓冲；`track_activation_threshold: 0.25` 与 `minimum_matching_threshold: 0.8` 可单独调整。缓冲保留关联状态，漏检帧仍没有真实观测，不能用来补算路程。修改参数后需要重新执行 `track`，新旧运行的编号不能直接互用。
+
 ### CLI 报告与历史
 
 ```powershell

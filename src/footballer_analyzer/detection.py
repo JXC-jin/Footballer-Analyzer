@@ -18,15 +18,16 @@ class Detector(Protocol):
 class YoloDetector:
     """CPU 上的 YOLO person 检测器，仅保留 COCO 类别 0。"""
 
-    def __init__(self, weights, imgsz=640, confidence=0.25):
-        """加载本地权重和推理参数；权重不存在时抛出 ValueError。"""
+    def __init__(self, weights, imgsz=1280, confidence=0.1, nms_iou=0.5):
+        """加载本地权重；confidence 为检测下限，nms_iou 控制重复框去重。"""
         if not weights.is_file():
             raise ValueError(f"缺少本地模型权重：{weights}")
         self.model = YOLO(str(weights))
         self.imgsz = imgsz
         self.confidence = confidence
+        self.nms_iou = nms_iou
 
     def detect(self, frame):
         """检测 BGR 帧中的人物，返回原图坐标下的 sv.Detections。"""
-        result = self.model.predict(frame, imgsz=self.imgsz, conf=self.confidence, classes=[0], device="cpu", verbose=False)[0]
+        result = self.model.predict(frame, imgsz=self.imgsz, conf=self.confidence, iou=self.nms_iou, classes=[0], device="cpu", verbose=False)[0]
         return sv.Detections.from_ultralytics(result)

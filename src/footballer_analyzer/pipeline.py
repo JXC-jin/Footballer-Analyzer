@@ -37,13 +37,14 @@ def track(config: Config) -> Path:
     }
     write_json(run_dir / "manifest.json", manifest)
     try:
-        detector = YoloDetector(config.weights, config.imgsz, config.confidence)
-        tracker = ByteTracker(info.fps, config.stride)
+        detector = YoloDetector(config.weights, config.imgsz, config.confidence, config.nms_iou)
+        tracker = ByteTracker(info.fps, config.stride, config.track_activation_threshold, config.lost_track_buffer_s, config.minimum_matching_threshold)
         teams = TeamClassifier()
         features = []
         sample_end = min(end_frame, config.start_frame + round(info.fps * 8))
         for packet in read_frames(config.video, config.start_frame, sample_end, max(1, round(info.fps))):
-            for box in detector.detect(packet.image).xyxy:
+            samples = detector.detect(packet.image)
+            for box in samples[samples.confidence >= config.track_activation_threshold + 0.1].xyxy:
                 feature = shirt_feature(packet.image, box)
                 if feature is not None:
                     features.append(feature)

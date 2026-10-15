@@ -9,8 +9,12 @@ match_offset_s: null
 start_frame: 0
 end_frame: null
 stride: 1
-imgsz: 640
-confidence: 0.25
+imgsz: 1280
+confidence: 0.1
+nms_iou: 0.5
+track_activation_threshold: 0.25
+lost_track_buffer_s: 3.0
+minimum_matching_threshold: 0.8
 pitch_length_m: 105.0
 pitch_width_m: 68.0
 speed_limit_mps: 12.0
