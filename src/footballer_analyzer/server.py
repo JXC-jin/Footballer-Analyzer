@@ -1,3 +1,5 @@
+"""提供仅监听回环地址的复盘服务：源帧、轨迹、标定、身份编辑与报告生成。"""
+
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -18,12 +20,16 @@ WEB = Path(__file__).parent / "web"
 
 
 class ReviewApp:
+    """管理输出根目录、轨迹缓存和编辑锁，供本地 HTTP 处理器共享。"""
+
     def __init__(self, output_root):
+        """解析输出根目录，初始化可重入锁与轨迹缓存。"""
         self.output_root = Path(output_root).resolve()
         self.lock = threading.RLock()
         self.track_cache = {}
 
     def run_dir(self, run_id):
+        """返回根目录内有效运行的绝对路径；非法 ID、越界或缺清单时抛出 ValueError。"""
         if not re.fullmatch(r"run_[A-Za-z0-9_]+", run_id):
             raise ValueError("运行标识无效")
         candidate = (self.output_root / run_id).resolve()
@@ -32,6 +38,7 @@ class ReviewApp:
         return candidate
 
     def runs(self):
+        """按运行名称倒序返回片段标识、运行状态与处理帧数列表。"""
         entries = []
         for path in sorted(self.output_root.glob("run_*/manifest.json"), reverse=True):
             manifest = read_json(path)
@@ -39,6 +46,7 @@ class ReviewApp:
         return entries
 
     def data(self, run_id):
+        """返回已完成运行的轨迹、编辑输入和最新完成报告，并标记报告是否过期。"""
         run_dir = self.run_dir(run_id)
         manifest = read_json(run_dir / "manifest.json")
         if manifest["status"] != "complete":
@@ -68,6 +76,7 @@ class ReviewApp:
         return {"manifest": manifest, "tracks": self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "reports": reports, "latest_report": latest}
 
     def save_bindings(self, run_id, payload):
+        """校验整份身份区间后原子保存，返回保存状态；冲突或越界时抛错。"""
         run_dir = self.run_dir(run_id)
         manifest = read_json(run_dir / "manifest.json")
         validate_bindings(payload, manifest, load_players(Path(manifest["config"]["players"])), read_json(run_dir / "catalog.json"))
@@ -75,6 +84,7 @@ class ReviewApp:
         return {"saved": True}
 
     def save_player(self, run_id, payload):
+        """校验球员 ID 和显示名，新增或更新共享档案，返回保存状态。"""
         run_dir = self.run_dir(run_id)
         manifest = read_json(run_dir / "manifest.json")
         path = Path(manifest["config"]["players"])
@@ -89,12 +99,17 @@ class ReviewApp:
 
 
 def handler_for(app):
+    """创建绑定 ReviewApp 的 HTTP 处理器类，限制可访问路径和写入来源。"""
     class ReviewHandler(BaseHTTPRequestHandler):
+        """处理静态页面、本地 JSON 接口、源帧与报告文件请求。"""
+
         def log_message(self, format_string, *args):
+            """仅输出非 200/304 状态的访问日志。"""
             if args and str(args[1]) not in ["200", "304"]:
                 super().log_message(format_string, *args)
 
         def send_bytes(self, payload, content_type, status=200):
+            """发送字节响应，显式标记类型和长度，并禁用缓存与内容类型嗅探。"""
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
@@ -104,9 +119,11 @@ def handler_for(app):
             self.wfile.write(payload)
 
         def send_json(self, payload, status=200):
+            """发送 UTF-8 JSON 响应，拒绝不可序列化数值。"""
             self.send_bytes(json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8"), "application/json; charset=utf-8", status)
 
         def check_local(self, mutate=False):
+            """校验回环 Host；写请求存在 Origin 时要求同源，否则抛出 ValueError。"""
             host = self.headers.get("Host", "")
             if host not in [f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"]:
                 raise ValueError("仅允许本地访问")
@@ -115,6 +132,7 @@ def handler_for(app):
                 raise ValueError("拒绝跨来源写入")
 
         def do_GET(self):
+            """读取白名单页面、运行数据、源帧或报告；预期错误返回 JSON，断连忽略。"""
             try:
                 self.check_local()
                 path = unquote(urlsplit(self.path).path)
@@ -163,6 +181,7 @@ def handler_for(app):
                 self.send_json({"error": str(error)}, 400)
 
         def do_POST(self):
+            """接收最多 1 MiB 的 JSON 对象，串行保存编辑或生成报告，预期错误返回 400。"""
             try:
                 self.check_local(mutate=True)
                 if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
@@ -196,6 +215,7 @@ def handler_for(app):
 
 
 def serve(output_root=ROOT / "outputs", port=8765):
+    """在 127.0.0.1 的指定端口阻塞运行复盘服务，收到 Ctrl+C 后关闭。"""
     if not 1 <= port <= 65535:
         raise ValueError("端口无效")
     app = ReviewApp(output_root)

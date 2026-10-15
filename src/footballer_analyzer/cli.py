@@ -1,3 +1,5 @@
+"""解析跟踪、标定、报告、历史查询与本地服务命令，统一返回退出码。"""
+
 import argparse
 import json
 from pathlib import Path
@@ -7,6 +9,7 @@ from .config import ROOT, load_config
 
 
 def main(argv=None):
+    """解析 argv 并执行子命令；默认读取进程参数，成功返回 0，已处理错误返回 1。"""
     parser = argparse.ArgumentParser(description="FootballerAnalyzer · 足球轨迹与球场位置复盘")
     commands = parser.add_subparsers(dest="command", required=True)
     track_command = commands.add_parser("track", help="检测跟踪并保存原始轨迹")

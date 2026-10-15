@@ -1,3 +1,5 @@
+"""建立图像到米制场地的单应性；校验对应点、可靠区域、适用窗口和确认状态。"""
+
 from pathlib import Path
 import math
 
@@ -8,6 +10,10 @@ from .storage import read_json, read_yaml, write_yaml
 
 
 def build_calibration(manifest, payload):
+    """根据运行清单和人工对应点构造标定字典，非法几何或区间抛出 ValueError。
+
+    图像点使用源像素，场地点与尺寸使用米；至少四对非共线点，默认可靠区域为凸包。
+    """
     image_points = np.asarray(payload.get("image_points", []), dtype=float)
     pitch_points = np.asarray(payload.get("pitch_points", []), dtype=float)
     if image_points.ndim != 2 or image_points.shape[1:] != (2,) or len(image_points) < 4 or image_points.shape != pitch_points.shape:
@@ -56,6 +62,7 @@ def build_calibration(manifest, payload):
 
 
 def validate_calibration(calibration, manifest, require_reviewed=True):
+    """检查标定是否匹配视频摘要与分辨率，并按需要求人工确认；失败时报错。"""
     if calibration is None:
         raise ValueError("请先在调试台完成场地标定")
     if calibration["video_sha256"] != manifest["video_sha256"] or calibration["width"] != manifest["video"]["width"] or calibration["height"] != manifest["video"]["height"]:
@@ -65,16 +72,22 @@ def validate_calibration(calibration, manifest, require_reviewed=True):
 
 
 def save_calibration(run_dir: Path, payload):
+    """构建标定，写入运行目录的 calibration.yaml，并返回标定字典。"""
     calibration = build_calibration(read_json(run_dir / "manifest.json"), payload)
     write_yaml(run_dir / "calibration.yaml", calibration)
     return calibration
 
 
 def load_calibration(run_dir):
+    """读取运行目录的标定字典；尚无标定文件时返回 None。"""
     return read_yaml(run_dir / "calibration.yaml")
 
 
 def project_observation(row, calibration):
+    """投影框底边中点，返回 (x 米, y 米, 无效原因)。
+
+    检查有效帧区间、脚点裁切、可靠区域和场地边界；无法投影时坐标为 None。
+    """
     if calibration is None:
         return None, None, "uncalibrated"
     if not calibration["start_frame"] <= row["frame_index"] < calibration["end_frame"]:

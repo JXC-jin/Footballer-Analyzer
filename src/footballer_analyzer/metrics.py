@@ -1,3 +1,5 @@
+"""将已绑定观测投影、切段和平滑，统计有效距离、速度与窗口覆盖；缺口不补距。"""
+
 import math
 
 import numpy as np
@@ -22,7 +24,10 @@ SUMMARY_SCHEMA = pa.schema([
 
 
 class OneEuro:
+    """单个连续轨迹段的二维 One-Euro 滤波状态，位置用米、时间用秒。"""
+
     def __init__(self, position, min_cutoff, beta):
+        """用段首位置、最低截止频率（Hz）与速度自适应系数初始化滤波器。"""
         self.position = np.asarray(position, dtype=float)
         self.previous_raw = self.position.copy()
         self.derivative = np.zeros(2)
@@ -31,9 +36,11 @@ class OneEuro:
 
     @staticmethod
     def alpha(cutoff, delta_t):
+        """根据截止频率（Hz）和正时间间隔（秒）计算低通平滑系数。"""
         return 1 / (1 + 1 / (2 * math.pi * cutoff * delta_t))
 
     def update(self, position, delta_t):
+        """用当前米制位置和正时间间隔更新状态，返回平滑位置的副本。"""
         position = np.asarray(position)
         derivative_alpha = self.alpha(1.0, delta_t)
         self.derivative += derivative_alpha * ((position - self.previous_raw) / delta_t - self.derivative)
@@ -44,6 +51,10 @@ class OneEuro:
 
 
 def calculate_motion(rows, manifest, calibration, bindings):
+    """按源帧升序消费观测，逐行产出投影、分段、位移和速度记录。
+
+    bindings 应先通过校验；漏检、绑定变化、无效点或超速跳变切段，段首无位移和速度。
+    """
     config = manifest["config"]
     states = {}
     segment_id = 0
@@ -91,6 +102,10 @@ def calculate_motion(rows, manifest, calibration, bindings):
 
 
 def summarize(rows, manifest, bindings):
+    """按绑定球员汇总有效时间边，返回距离、秒数、覆盖比例与平均速度。
+
+    距离单位米，速度单位米/秒；覆盖分母为分析窗口时长，无有效时间时距离/速度为 None。
+    """
     players = {entry["player_id"]: entry["team_id"] for entry in bindings if entry["action"] == "bind"}
     totals = {player_id: [0.0, 0.0] for player_id in players}
     for row in rows:

@@ -1,7 +1,10 @@
+"""维护跨场球员档案与本次运行的区间绑定；所有源帧区间均为左闭右开。"""
+
 from .storage import read_yaml
 
 
 def load_players(path):
+    """读取球员档案并按 player_id 索引；缺文件返回空字典，格式或重复 ID 报错。"""
     payload = read_yaml(path, {"players": []})
     if not isinstance(payload, dict) or not isinstance(payload.get("players"), list):
         raise ValueError("球员档案格式必须为 players 列表")
@@ -15,6 +18,10 @@ def load_players(path):
 
 
 def validate_bindings(payload, manifest, players, catalog):
+    """校验并返回绑定列表；错误运行、未知身份、越界、重叠或队伍冲突时报错。
+
+    同一球员可绑定多个不重叠轨迹区间；action 为 bind 或 exclude。
+    """
     if not isinstance(payload, dict) or payload.get("run_id") != manifest["run_id"] or not isinstance(payload.get("bindings"), list):
         raise ValueError("身份绑定的 run_id 或列表格式不匹配")
     entries = payload["bindings"]
@@ -44,6 +51,7 @@ def validate_bindings(payload, manifest, players, catalog):
 
 
 def resolve_identity(row, bindings):
+    """按轨迹和源帧查找绑定，返回球员 ID、球队、绑定序号及排除/未绑定原因。"""
     for binding_index, entry in enumerate(bindings):
         if entry["track_id"] == row["track_id"] and entry["start_frame"] <= row["frame_index"] < entry["end_frame"]:
             if entry["action"] == "exclude":

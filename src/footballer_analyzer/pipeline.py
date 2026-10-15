@@ -1,3 +1,5 @@
+"""编排跟踪阶段：读取配置、采样分队、持续关联目标，保存原始轨迹与复查产物。"""
+
 from pathlib import Path
 import html
 import time
@@ -13,6 +15,10 @@ from .video import inspect_video, read_frames
 
 
 def track(config: Config) -> Path:
+    """分析配置指定的源帧窗口，创建独立运行目录并返回其路径。
+
+    写出原始 Parquet、预览视频、轨迹目录与绑定模板；跟踪器跨帧复用，失败写入清单后抛错。
+    """
     info = inspect_video(config.video)
     end_frame = config.end_frame if config.end_frame is not None else info.frame_count
     if config.start_frame >= end_frame or end_frame > info.frame_count:

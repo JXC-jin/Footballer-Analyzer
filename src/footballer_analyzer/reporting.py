@@ -1,3 +1,5 @@
+"""复用原始轨迹生成版本化跑动报告，并对显式选择的历史报告执行防重复汇总。"""
+
 from collections import Counter, defaultdict
 from pathlib import Path
 import html
@@ -18,6 +20,7 @@ from .video import read_frames
 
 
 def draw_pitch(image, left, top, width, height, length_m, width_m):
+    """在 BGR 图像的指定像素区域原地绘制简化球场，比例按米制尺寸计算。"""
     cv2.rectangle(image, (left, top), (left + width, top + height), (38, 75, 49), -1)
     cv2.rectangle(image, (left, top), (left + width, top + height), (170, 200, 180), 1)
     cv2.line(image, (left + width // 2, top), (left + width // 2, top + height), (170, 200, 180), 1)
@@ -26,6 +29,7 @@ def draw_pitch(image, left, top, width, height, length_m, width_m):
 
 
 def render_review(run_dir, report_dir, manifest, calibration, bindings):
+    """顺序解码源视频，将轨迹 ID、身份、脚点和球场位置写入 review.mp4。"""
     info = manifest["video"]
     rows_by_frame = defaultdict(list)
     for row in read_rows(run_dir / "tracks.parquet"):
@@ -60,6 +64,7 @@ def render_review(run_dir, report_dir, manifest, calibration, bindings):
 
 
 def render_charts(report_dir, motions, summary, players, calibration):
+    """为每名汇总球员保存速度曲线与按有效秒数加权的热图；断段分别绘制。"""
     for summary_row in summary:
         player_id = summary_row["player_id"]
         player_rows = [row for row in motions if row["player_id"] == player_id]
@@ -86,6 +91,10 @@ def render_charts(report_dir, motions, summary, players, calibration):
 
 
 def create_report(run_dir: Path):
+    """校验源视频、已确认标定和身份绑定，生成新报告目录并返回路径。
+
+    保留原始轨迹与旧报告，保存输入快照、统计、图表和视频；生成失败记录状态并抛错。
+    """
     manifest = read_json(run_dir / "manifest.json")
     if manifest["status"] != "complete":
         raise ValueError("跟踪尚未成功完成")
@@ -146,6 +155,10 @@ def create_report(run_dir: Path):
 
 
 def history(player_id, report_dirs):
+    """查询指定球员在选定报告中的记录，返回片段列表与可累计的米制距离。
+
+    拒绝重复版本和已知重叠片段；同场偏移未知时仅逐片展示，累计距离返回 None。
+    """
     selected = []
     seen_clips = set()
     for report_dir in report_dirs:

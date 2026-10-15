@@ -1,3 +1,5 @@
+"""用 YOLO 检测单帧人物，输出原图像素框；跨帧身份由 tracking 模块维护。"""
+
 from typing import Protocol
 
 import numpy as np
@@ -6,11 +8,18 @@ from ultralytics import YOLO
 
 
 class Detector(Protocol):
-    def detect(self, frame: np.ndarray) -> sv.Detections: ...
+    """检测接口：接收 BGR 图像，返回 supervision 检测结果。"""
+
+    def detect(self, frame: np.ndarray) -> sv.Detections:
+        """返回当前帧的像素框、类别和置信度，不分配轨迹 ID。"""
+        ...
 
 
 class YoloDetector:
+    """CPU 上的 YOLO person 检测器，仅保留 COCO 类别 0。"""
+
     def __init__(self, weights, imgsz=640, confidence=0.25):
+        """加载本地权重和推理参数；权重不存在时抛出 ValueError。"""
         if not weights.is_file():
             raise ValueError(f"缺少本地模型权重：{weights}")
         self.model = YOLO(str(weights))
@@ -18,5 +27,6 @@ class YoloDetector:
         self.confidence = confidence
 
     def detect(self, frame):
+        """检测 BGR 帧中的人物，返回原图坐标下的 sv.Detections。"""
         result = self.model.predict(frame, imgsz=self.imgsz, conf=self.confidence, classes=[0], device="cpu", verbose=False)[0]
         return sv.Detections.from_ultralytics(result)

@@ -1,3 +1,5 @@
+"""读取并校验分析配置；相对路径以项目根目录为基准，帧区间左闭右开。"""
+
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import math
@@ -9,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @dataclass(frozen=True)
 class Config:
+    """单次分析配置；坐标尺寸用米，时间用秒，帧号来自源视频。"""
+
     video: Path
     weights: Path
     output_root: Path
@@ -29,10 +33,12 @@ class Config:
     filter_beta: float = 0.0
 
     def snapshot(self):
+        """返回可序列化配置，将 Path 转为字符串。"""
         return {key: str(value) if isinstance(value, Path) else value for key, value in asdict(self).items()}
 
 
 def load_config(path: str | Path) -> Config:
+    """读取 YAML 并返回有效配置；非对象内容或非法参数抛出 ValueError。"""
     config_path = Path(path).resolve()
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -41,6 +47,7 @@ def load_config(path: str | Path) -> Config:
 
 
 def config_from_dict(payload: dict) -> Config:
+    """补齐默认路径并构造配置；校验帧区间、数值范围和比赛标识。"""
     values = dict(payload)
     for key, default in [("output_root", "outputs"), ("players", "data/players.yaml")]:
         values.setdefault(key, default)
