@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import math
+import re
 
 import cv2
 import numpy as np
@@ -69,6 +70,8 @@ def validate_calibration(calibration, manifest, require_reviewed=True):
         raise ValueError("标定与源视频不匹配")
     if require_reviewed and calibration.get("reviewed") is not True:
         raise ValueError("标定为草稿：请检查首、中、末帧后确认，再生成统计报告")
+    if calibration.get("mode") == "white_lines" and not any(record.get("homography") is not None for record in calibration.get("frames", {}).values()):
+        raise ValueError("逐帧标定没有可靠映射，请先检查白线识别结果")
 
 
 def save_calibration(run_dir: Path, payload):
@@ -80,7 +83,28 @@ def save_calibration(run_dir: Path, payload):
 
 def load_calibration(run_dir):
     """读取运行目录的标定字典；尚无标定文件时返回 None。"""
-    return read_yaml(run_dir / "calibration.yaml")
+    calibration = read_yaml(run_dir / "calibration.yaml")
+    if calibration and calibration.get("mode") == "white_lines":
+        calibration["frames"] = read_json(calibration_directory(run_dir, calibration) / "frames.json")
+    return calibration
+
+
+def calibration_directory(run_dir, calibration):
+    """解析当前白线标定版本目录，拒绝包含路径字符的版本标识。"""
+    identifier = calibration.get("calibration_id", "")
+    if not re.fullmatch(r"lines_[A-Za-z0-9_]+", identifier):
+        raise ValueError("逐帧标定版本标识无效")
+    return Path(run_dir) / "calibrations" / identifier
+
+
+def calibration_for_frame(calibration, frame_index):
+    """选择当前帧的可靠映射，静态标定原样返回；动态失败或缺帧返回 None。"""
+    if calibration and calibration.get("mode") == "white_lines":
+        record = calibration.get("frames", {}).get(str(frame_index))
+        if not record or record.get("status") != "valid" or record.get("homography") is None:
+            return None
+        return {**calibration, "homography": record["homography"], "roi": record["roi"]}
+    return calibration
 
 
 def project_observation(row, calibration):
@@ -92,6 +116,9 @@ def project_observation(row, calibration):
         return None, None, "uncalibrated"
     if not calibration["start_frame"] <= row["frame_index"] < calibration["end_frame"]:
         return None, None, "outside_calibration_window"
+    calibration = calibration_for_frame(calibration, row["frame_index"])
+    if calibration is None:
+        return None, None, "calibration_unreliable"
     foot_x = (row["bbox_x1"] + row["bbox_x2"]) / 2
     foot_y = row["bbox_y2"]
     transformed = np.asarray(calibration["homography"]) @ np.array([foot_x, foot_y, 1.0])

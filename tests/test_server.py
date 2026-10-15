@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from footballer_analyzer.server import ReviewApp, handler_for
-from footballer_analyzer.storage import DETECTION_SCHEMA, RowWriter, read_rows
+from footballer_analyzer.storage import DETECTION_SCHEMA, RowWriter, read_rows, read_yaml, write_json, write_yaml
 import test_reporting
 
 
@@ -57,6 +57,37 @@ class ServerTests(unittest.TestCase):
                 bad_host_request = Request(base + "/api/runs", headers={"Host": "example.com"})
                 with self.assertRaises(HTTPError):
                     urlopen(bad_host_request)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_white_line_evidence_and_review_are_bound_to_calibration_version(self):
+        """透明掩膜绑定标定版本，旧版本不可误确认，非法版本路径被拒绝。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir, _ = test_reporting.ReportingTests().prepare_run(temporary)
+            calibration = read_yaml(run_dir / "calibration.yaml")
+            calibration.update(mode="white_lines", calibration_id="lines_test", reviewed=False)
+            version_dir = run_dir / "calibrations/lines_test"
+            write_json(version_dir / "frames.json", {"0": {"status": "insufficient_geometry", "homography": None}})
+            write_yaml(version_dir / "calibration.yaml", calibration)
+            write_yaml(run_dir / "calibration.yaml", calibration)
+            (version_dir / "masks").mkdir()
+            cv2.imwrite(str(version_dir / "masks/0.png"), np.zeros((48, 64, 4), np.uint8))
+            app = ReviewApp(temporary)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(app))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_port}/api/runs/run_test"
+            try:
+                with urlopen(base + "/white-lines/0.png?version=lines_test") as response:
+                    self.assertEqual(response.headers["Content-Type"], "image/png")
+                with self.assertRaises(HTTPError):
+                    urlopen(base + "/white-lines/0.png?version=../../manifest")
+                with self.assertRaisesRegex(ValueError, "版本"):
+                    app.review_calibration("run_test", {"calibration_id": "lines_old", "reviewed": True})
+                app.review_calibration("run_test", {"calibration_id": "lines_test", "reviewed": True})
+                self.assertTrue(app.data("run_test")["calibration"]["reviewed"])
+                self.assertGreater(len(app.data("run_test")["pitch_lines"]), 10)
             finally:
                 server.shutdown()
                 server.server_close()

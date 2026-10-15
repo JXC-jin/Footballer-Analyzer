@@ -226,8 +226,8 @@ def circle_homographies(mask, lines, length, width):
 def rectangle_homographies(mask, lines, length, width):
     """枚举边线与禁区矩形的几何对应，供中圈不可见时自动初始化。"""
     height, image_width = mask.shape
-    horizontal = [line for line in lines if abs(line["equation"][0]) < 0.45]
-    transverse = [line for line in lines if abs(line["equation"][0]) > 0.45]
+    horizontal = [line for line in lines if abs(line["equation"][0]) < 0.5]
+    transverse = [line for line in lines if abs(line["equation"][0]) > 0.3]
     rectangles = [(0, length, 0, width), (0, length / 2, 0, width), (length / 2, length, 0, width), (16.5, length / 2, 0, width), (length / 2, length - 16.5, 0, width)]
     for origin, sign in [(0, 1), (length, -1)]:
         for depth, half_width in [(16.5, 20.16), (5.5, 9.16), (16.5, width / 2)]:
@@ -239,6 +239,8 @@ def rectangle_homographies(mask, lines, length, width):
             continue
         for first, second in combinations(transverse, 2):
             if abs(np.dot(first["equation"][:2], second["equation"][:2])) < 0.7:
+                continue
+            if abs(np.dot(far["equation"][:2], first["equation"][:2])) > 0.95:
                 continue
             corners = [intersect_lines(boundary["equation"], cross["equation"]) for boundary, cross in [(far, first), (far, second), (near, second), (near, first)]]
             if any(corner is None for corner in corners):

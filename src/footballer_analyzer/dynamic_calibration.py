@@ -107,7 +107,14 @@ class WhiteLineCalibrator:
         lines = detect_long_lines(mask)
         distance = cv2.distanceTransform(255 - mask, cv2.DIST_L2, 3)
         vertical, horizontal = np.nonzero(mask)
-        self.observed = np.column_stack((horizontal, vertical))[::max(1, len(horizontal) // 350)]
+        pixels = np.column_stack((horizontal, vertical))
+        tiles = (vertical // 32) * ((mask.shape[1] + 31) // 32) + horizontal // 32
+        balanced = []
+        for tile in np.unique(tiles):
+            members = pixels[tiles == tile]
+            if len(members) >= 3:
+                balanced.extend(members[[len(members) // 4, len(members) * 3 // 4]])
+        self.observed = np.asarray(balanced).reshape(-1, 2)
         record = {"frame_index": int(frame_index), "status": "insufficient_geometry", "homography": None, "support": 0.0, "coverage": 0.0, "error_px": None, "p90_error_px": None, "curve_count": 0}
         if len(horizontal) < 150:
             self.previous = None
@@ -141,4 +148,4 @@ class WhiteLineCalibrator:
     @staticmethod
     def reliable(quality):
         """要求白线支持、观测覆盖和至少四条曲线同时成立，拒绝局部巧合。"""
-        return quality["support"] >= 0.65 and quality["coverage"] >= 0.35 and quality["curve_count"] >= 4 and quality["error_px"] <= 3
+        return quality["support"] >= 0.65 and quality["coverage"] >= 0.3 and quality["curve_count"] >= 4 and quality["error_px"] <= 3

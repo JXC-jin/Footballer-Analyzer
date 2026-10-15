@@ -2,7 +2,7 @@
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 import json
 import mimetypes
 import re
@@ -10,9 +10,10 @@ import threading
 
 import cv2
 
-from .calibration import load_calibration, save_calibration
+from .calibration import calibration_directory, load_calibration, save_calibration
 from .config import ROOT
 from .identity import load_players, validate_bindings
+from .pitch_geometry import pitch_polylines
 from .storage import read_json, read_rows, read_yaml, write_yaml
 from .video import read_frame
 
@@ -27,6 +28,7 @@ class ReviewApp:
         self.output_root = Path(output_root).resolve()
         self.lock = threading.RLock()
         self.track_cache = {}
+        self.calibration_jobs = {}
 
     def run_dir(self, run_id):
         """返回根目录内有效运行的绝对路径；非法 ID、越界或缺清单时抛出 ValueError。"""
@@ -74,7 +76,10 @@ class ReviewApp:
                 "stale": report_manifest["bindings"] != bindings or report_manifest["calibration"] != calibration or report_manifest["players"] != list(players.values()),
                 "motion": list(read_rows(report_dir / "motion.parquet")),
             }
-        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "reports": reports, "latest_report": latest}
+        length = calibration["pitch_length_m"] if calibration else manifest["config"]["pitch_length_m"]
+        width = calibration["pitch_width_m"] if calibration else manifest["config"]["pitch_width_m"]
+        pitch_lines = [{"name": name, "points": points.tolist()} for name, points in pitch_polylines(length, width)]
+        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "pitch_lines": pitch_lines, "reports": reports, "latest_report": latest}
 
     def save_bindings(self, run_id, payload):
         """校验整份身份区间后原子保存，返回保存状态；冲突或越界时抛错。"""
@@ -96,6 +101,53 @@ class ReviewApp:
             raise ValueError("球员 ID 使用 1–64 位字母、数字、下划线或短横线，姓名不得为空")
         players[player_id] = {"player_id": player_id, "display_name": display_name}
         write_yaml(path, {"players": list(players.values())})
+        return {"saved": True}
+
+    def start_calibration(self, run_id, payload):
+        """启动单个后台白线任务，返回进度；重复请求复用进行中的任务。"""
+        from .dynamic_calibration import WhiteLineCalibrator
+        from .white_line_pipeline import calibrate_run
+
+        run_dir = self.run_dir(run_id)
+        manifest = read_json(run_dir / "manifest.json")
+        if manifest["status"] != "complete":
+            raise ValueError("运行尚未完成")
+        if self.calibration_jobs.get(run_id, {}).get("status") == "running":
+            return dict(self.calibration_jobs[run_id])
+        length = float(payload.get("pitch_length_m", manifest["config"]["pitch_length_m"]))
+        width = float(payload.get("pitch_width_m", manifest["config"]["pitch_width_m"]))
+        WhiteLineCalibrator(length, width)
+        job = {"status": "running", "processed_frames": 0, "total_frames": manifest["end_frame"] - manifest["start_frame"]}
+        self.calibration_jobs[run_id] = job
+
+        def progress(processed, total):
+            """更新共享进度，不持有整个计算阶段的服务锁。"""
+            with self.lock:
+                job.update(processed_frames=processed, total_frames=total)
+
+        def worker():
+            """完成后发布版本并记录状态，异常保留原标定。"""
+            try:
+                calibration = calibrate_run(run_dir, length, width, progress)
+                with self.lock:
+                    job.update(status="complete", summary=calibration["summary"], calibration_id=calibration["calibration_id"])
+            except Exception as error:
+                with self.lock:
+                    job.update(status="failed", error=str(error))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return dict(job)
+
+    def review_calibration(self, run_id, payload):
+        """保存当前动态标定版本的验收状态，拒绝确认已被替换的旧版本。"""
+        run_dir = self.run_dir(run_id)
+        calibration = read_yaml(run_dir / "calibration.yaml")
+        if not calibration or calibration.get("mode") != "white_lines" or payload.get("calibration_id") != calibration.get("calibration_id"):
+            raise ValueError("标定版本已变化，请刷新后重新验收")
+        if type(payload.get("reviewed")) is not bool:
+            raise ValueError("验收状态必须为布尔值")
+        calibration["reviewed"] = payload["reviewed"]
+        write_yaml(run_dir / "calibration.yaml", calibration)
         return {"saved": True}
 
 
@@ -146,6 +198,20 @@ def handler_for(app):
                         run_dir = app.run_dir(run_id)
                         if action is None:
                             return self.send_json(app.data(run_id))
+                        if action == "calibration-job":
+                            return self.send_json(dict(app.calibration_jobs.get(run_id, {"status": "idle"})))
+                        mask_match = re.fullmatch(r"white-lines/(\d+)\.png", action)
+                        if mask_match:
+                            frame_index = int(mask_match[1])
+                            calibration = read_yaml(run_dir / "calibration.yaml")
+                            version = parse_qs(urlsplit(self.path).query).get("version", [None])[0]
+                            if version is not None:
+                                version_dir = calibration_directory(run_dir, {"calibration_id": version})
+                                calibration = read_yaml(version_dir / "calibration.yaml")
+                            if not calibration or calibration.get("mode") != "white_lines" or not calibration["start_frame"] <= frame_index < calibration["end_frame"]:
+                                raise ValueError("该帧没有白线识别缓存")
+                            mask_path = calibration_directory(run_dir, calibration) / "masks" / f"{frame_index}.png"
+                            return self.send_bytes(mask_path.read_bytes(), "image/png")
                         if action.startswith("frames/"):
                             frame_text = action.removeprefix("frames/")
                             if not frame_text.isdigit():
@@ -193,13 +259,19 @@ def handler_for(app):
                 payload = json.loads(self.rfile.read(length))
                 if not isinstance(payload, dict):
                     raise ValueError("请求必须为 JSON 对象")
-                match = re.fullmatch(r"/api/runs/([^/]+)/(calibration|bindings|players|report)", urlsplit(self.path).path)
+                match = re.fullmatch(r"/api/runs/([^/]+)/(calibration|calibration-auto|calibration-review|bindings|players|report)", urlsplit(self.path).path)
                 if not match:
                     return self.send_json({"error": "接口不存在"}, 404)
                 run_id, action = match.groups()
                 with app.lock:
+                    if action in {"calibration", "calibration-review"} and app.calibration_jobs.get(run_id, {}).get("status") == "running":
+                        raise ValueError("逐帧标定仍在计算，请完成后再修改或验收")
                     if action == "calibration":
                         result = save_calibration(app.run_dir(run_id), payload)
+                    elif action == "calibration-auto":
+                        result = app.start_calibration(run_id, payload)
+                    elif action == "calibration-review":
+                        result = app.review_calibration(run_id, payload)
                     elif action == "bindings":
                         result = app.save_bindings(run_id, payload)
                     elif action == "players":

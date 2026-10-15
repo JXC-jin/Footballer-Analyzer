@@ -1,7 +1,7 @@
 const element = (id) => document.getElementById(id);
-const state = { runId: null, data: null, frame: 0, selected: null, image: null, playing: false, pointMode: false, roiMode: false, roi: [], points: [], requestId: 0, runRequestId: 0, frameRows: new Map(), detectionRows: new Map(), motionRows: new Map(), draftDirty: false };
+const state = { runId: null, data: null, frame: 0, selected: null, image: null, whiteImage: null, playing: false, pointMode: false, roiMode: false, roi: [], points: [], requestId: 0, runRequestId: 0, frameRows: new Map(), detectionRows: new Map(), motionRows: new Map(), draftDirty: false, calibrationTimer: null };
 const colors = { home: "#28cfac", away: "#f9b26a", cluster_0: "#28cfac", cluster_1: "#f9b26a", unknown: "#a6b3b2" };
-const reasons = { unbound: "身份尚未确认", excluded: "人工排除", outside_roi: "超出可靠统计区域", outside_pitch: "投影超出球场", clipped_feet: "脚点被画面裁切", uncalibrated: "尚未标定", outside_calibration_window: "超出标定有效区间", invalid_projection: "投影无效", speed_jump: "异常速度跳变，已切段" };
+const reasons = { unbound: "身份尚未确认", excluded: "人工排除", outside_roi: "超出可靠统计区域", outside_pitch: "投影超出球场", clipped_feet: "脚点被画面裁切", uncalibrated: "尚未标定", calibration_unreliable: "本帧白线几何不足，暂停场地投影", outside_calibration_window: "超出标定有效区间", invalid_projection: "投影无效", speed_jump: "异常速度跳变，已切段" };
 
 function notify(message, error = false) {
   element("notice").textContent = message;
@@ -36,11 +36,18 @@ function bindingFor(row) {
   return state.data.bindings.bindings.find((entry) => entry.track_id === row.track_id && entry.start_frame <= row.frame_index && row.frame_index < entry.end_frame);
 }
 
-function project(row) {
+function calibrationAt(frameIndex) {
   const calibration = state.data.calibration;
+  if (calibration?.mode !== "white_lines") return calibration;
+  const record = calibration.frames[String(frameIndex)];
+  return record?.status === "valid" && record.homography ? { ...calibration, homography: record.homography, roi: record.roi } : null;
+}
+
+function project(row) {
+  const calibration = calibrationAt(row.frame_index);
   const binding = bindingFor(row);
   const base = { row, binding, color: colors[binding?.team_id || row.team_id] || colors.unknown, position: null, reason: null };
-  if (!calibration) return { ...base, reason: "uncalibrated" };
+  if (!calibration) return { ...base, reason: state.data.calibration?.mode === "white_lines" ? "calibration_unreliable" : "uncalibrated" };
   if (row.frame_index < calibration.start_frame || row.frame_index >= calibration.end_frame) return { ...base, reason: "outside_calibration_window" };
   const footX = (row.bbox_x1 + row.bbox_x2) / 2;
   const footY = row.bbox_y2;
@@ -94,16 +101,8 @@ function drawPitch(observations) {
   pitchShape("rect", { x: -4, y: -4, width: length + 8, height: width + 8, fill: "#214e37" });
   for (let index = 0; index < 10; index++) pitchShape("rect", { x: index * length / 10, y: 0, width: length / 10, height: width, fill: index % 2 ? "#2d5a3d" : "#285539" });
   const line = { fill: "none", stroke: "#83a17c", "stroke-width": 0.32 };
-  pitchShape("rect", { x: 0, y: 0, width: length, height: width, ...line });
-  pitchShape("line", { x1: length / 2, y1: 0, x2: length / 2, y2: width, ...line });
-  pitchShape("circle", { cx: length / 2, cy: width / 2, r: Math.min(9.15, width / 5), ...line });
+  for (const curve of state.data.pitch_lines || []) pitchShape("polyline", { points: curve.points.map((point) => point.join(",")).join(" "), ...line });
   pitchShape("circle", { cx: length / 2, cy: width / 2, r: 0.6, fill: "#83a17c" });
-  for (const side of [0, 1]) {
-    const boxLength = Math.min(16.5, length * 0.16);
-    const boxWidth = Math.min(40.32, width * 0.65);
-    pitchShape("rect", { x: side ? length - boxLength : 0, y: (width - boxWidth) / 2, width: boxLength, height: boxWidth, ...line });
-    pitchShape("rect", { x: side ? length - boxLength / 3 : 0, y: width * 0.36, width: boxLength / 3, height: width * 0.28, ...line });
-  }
   if (!calibration) {
     pitchShape("text", { x: length / 2, y: width / 2 + 18, "text-anchor": "middle", fill: "#b6ccab", "font-size": 3 }, "先在“场地标定”中建立对应点");
   }
@@ -132,6 +131,11 @@ function drawVideo(observations) {
   const context = canvas.getContext("2d");
   context.clearRect(0, 0, canvas.width, canvas.height);
   if (state.image) context.drawImage(state.image, 0, 0, canvas.width, canvas.height);
+  if (state.whiteImage && element("show-white-lines").checked) {
+    context.globalAlpha = 0.7;
+    context.drawImage(state.whiteImage, 0, 0, canvas.width, canvas.height);
+    context.globalAlpha = 1;
+  }
   const rawDetections = state.detectionRows.get(state.frame) || [];
   const matched = new Set(observations.map((observation) => detectionKey(observation.row)));
   const unmatched = rawDetections.filter((row) => !matched.has(detectionKey(row)));
@@ -145,8 +149,8 @@ function drawVideo(observations) {
     }
     context.setLineDash([]);
   }
-  const calibration = state.data.calibration;
-  if (calibration && state.frame >= calibration.start_frame && state.frame < calibration.end_frame) {
+  const calibration = calibrationAt(state.frame);
+  if (calibration && element("show-pitch-model").checked && state.frame >= calibration.start_frame && state.frame < calibration.end_frame) {
     context.strokeStyle = "#d4eac488";
     context.lineWidth = 2;
     context.setLineDash([10, 8]);
@@ -155,17 +159,17 @@ function drawVideo(observations) {
     context.closePath(); context.stroke(); context.setLineDash([]);
     const inverse = invert3(calibration.homography);
     if (inverse) {
-      const length = calibration.pitch_length_m, width = calibration.pitch_width_m;
-      const lines = [[[0, 0], [length, 0]], [[0, width], [length, width]], [[length / 2, 0], [length / 2, width]]];
-      const circle = Array.from({ length: 65 }, (_, index) => [length / 2 + 9.15 * Math.cos(index / 64 * Math.PI * 2), width / 2 + 9.15 * Math.sin(index / 64 * Math.PI * 2)]);
-      context.strokeStyle = "#a3f4ce99";
-      for (const points of [...lines, circle]) {
+      context.strokeStyle = "#ffe55a";
+      for (const { points } of state.data.pitch_lines || []) {
         context.beginPath();
+        let connected = false;
         points.forEach(([horizontal, vertical], index) => {
           const divisor = inverse[2][0] * horizontal + inverse[2][1] * vertical + inverse[2][2];
           const pixelX = (inverse[0][0] * horizontal + inverse[0][1] * vertical + inverse[0][2]) / divisor;
           const pixelY = (inverse[1][0] * horizontal + inverse[1][1] * vertical + inverse[1][2]) / divisor;
-          if (index) context.lineTo(pixelX, pixelY); else context.moveTo(pixelX, pixelY);
+          if (!Number.isFinite(pixelX) || !Number.isFinite(pixelY) || Math.abs(pixelX) > 1e6 || Math.abs(pixelY) > 1e6) { connected = false; return; }
+          if (connected) context.lineTo(pixelX, pixelY); else context.moveTo(pixelX, pixelY);
+          connected = true;
         });
         context.stroke();
       }
@@ -186,11 +190,11 @@ function drawVideo(observations) {
     context.fillText(label, row.bbox_x1 + 6, Math.max(20, row.bbox_y1 - 8));
     context.beginPath(); context.arc((row.bbox_x1 + row.bbox_x2) / 2, row.bbox_y2, selected ? 6 : 4, 0, Math.PI * 2); context.fill();
   }
-  if (state.pointMode || !element("calibration-tab").hidden) state.points.forEach((point, index) => {
+  if (state.frame === Number(element("calibration-reference").value) && (state.pointMode || !element("calibration-tab").hidden)) state.points.forEach((point, index) => {
     context.fillStyle = "#ffd58f"; context.beginPath(); context.arc(point.image[0], point.image[1], 7, 0, Math.PI * 2); context.fill();
     context.font = "bold 24px sans-serif"; context.fillText(String(index + 1), point.image[0] + 10, point.image[1] - 10);
   });
-  if (!element("calibration-tab").hidden && state.roi.length) {
+  if (state.data.calibration?.mode !== "white_lines" && !element("calibration-tab").hidden && state.roi.length) {
     context.strokeStyle = "#ffe48e"; context.lineWidth = 3; context.beginPath();
     state.roi.forEach(([horizontal, vertical], index) => index ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical));
     if (!state.roiMode) context.closePath();
@@ -216,6 +220,19 @@ function draw() {
   const observations = (state.frameRows.get(state.frame) || []).map(project);
   drawVideo(observations);
   drawPitch(observations);
+  const calibration = state.data.calibration;
+  if (calibration?.mode === "white_lines") {
+    const record = calibration.frames[String(state.frame)];
+    const valid = record?.status === "valid";
+    element("stat-calibration").textContent = valid ? "逐帧有效" : "本帧失效";
+    element("pitch-mode").textContent = valid ? calibration.reviewed ? "逐帧米制投影" : "逐帧 · 待验收" : "白线不足 · 暂停投影";
+    element("calibration-detail").textContent = valid ? `白线支持 ${(record.support * 100).toFixed(1)}% · 中位误差 ${record.error_px.toFixed(1)} px` : "本帧不使用上一帧标定";
+    element("white-line-status").textContent = `青色：本帧提取的白色线索（可能包含白衣）；黄色：匹配的球场模型。源帧 ${state.frame} · ${valid ? `有效 · ${record.curve_count} 条曲线 · P90 误差 ${record.p90_error_px.toFixed(1)} px` : "几何匹配失败，隐藏模型与球员投影"}。`;
+    element("white-line-status").classList.toggle("calibration-warning", !valid);
+  } else {
+    element("white-line-status").textContent = "黄色：静态场地模型。运动镜头请在“场地标定”中运行逐帧白线标定。";
+    element("white-line-status").classList.remove("calibration-warning");
+  }
   element("stat-observations").textContent = observations.length;
   element("visible-count").textContent = observations.length;
   element("stat-bound").textContent = observations.filter((observation) => observation.binding?.action === "bind").length;
@@ -247,9 +264,16 @@ async function showFrame(frameIndex) {
   const image = new Image();
   const loaded = new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error("无法读取视频帧，请检查源视频是否仍存在")); });
   image.src = api(`frames/${aligned}`);
-  await loaded;
+  let whiteImage = null;
+  const calibration = state.data.calibration;
+  if (calibration?.mode === "white_lines" && aligned >= calibration.start_frame && aligned < calibration.end_frame) {
+    whiteImage = new Image();
+    const whiteLoaded = new Promise((resolve, reject) => { whiteImage.onload = resolve; whiteImage.onerror = () => reject(new Error("白线识别缓存读取失败，请重新标定")); });
+    whiteImage.src = `${api(`white-lines/${aligned}.png`)}?version=${encodeURIComponent(calibration.calibration_id)}`;
+    await Promise.all([loaded, whiteLoaded]);
+  } else await loaded;
   if (requestId !== state.requestId) return;
-  state.frame = aligned; state.image = image; draw();
+  state.frame = aligned; state.image = image; state.whiteImage = whiteImage; draw();
 }
 
 function selectTrack(trackId) {
@@ -357,7 +381,7 @@ async function loadRun(runId, preserve = false) {
   element("stat-duration").textContent = `${((manifest.end_frame - manifest.start_frame) / manifest.video.fps).toFixed(2)} s`;
   element("stat-frame-info").textContent = `源帧 [${manifest.start_frame}, ${manifest.end_frame}) · stride ${manifest.config.stride}`;
   element("stat-calibration").textContent = calibration ? calibration.reviewed ? "已确认" : "草稿预览" : "未标定";
-  element("calibration-detail").textContent = calibration ? `${calibration.image_points.length} 对点 · 拟合残差 ${calibration.fit_rmse_m.toFixed(3)} m` : "先建立图像点与场地对应关系";
+  element("calibration-detail").textContent = calibration?.mode === "white_lines" ? "逐帧白线几何匹配" : calibration ? `${calibration.image_points.length} 对点 · 拟合残差 ${calibration.fit_rmse_m.toFixed(3)} m` : "先建立图像点与场地对应关系";
   element("pitch-mode").textContent = calibration ? calibration.reviewed ? "米制投影" : "草稿 · 未确认" : "等待标定";
   element("pitch-length").value = calibration?.pitch_length_m || manifest.config.pitch_length_m;
   element("pitch-width").value = calibration?.pitch_width_m || manifest.config.pitch_width_m;
@@ -365,14 +389,18 @@ async function loadRun(runId, preserve = false) {
   element("calibration-start").value = calibration?.start_frame ?? manifest.start_frame;
   element("calibration-end").value = calibration?.end_frame ?? manifest.end_frame;
   element("calibration-reviewed").checked = calibration?.reviewed || false;
-  element("calibration-fit").textContent = calibration ? `拟合点残差 ${calibration.fit_rmse_m.toFixed(3)} m，仅用于检查点的拟合情况，不能证明轨迹精度。${calibration.note || ""}` : "尚无拟合结果。";
-  state.points = calibration ? calibration.image_points.map((image, index) => ({ image: [...image], pitch: [...calibration.pitch_points[index]] })) : [];
-  state.roi = calibration ? calibration.roi.map((point) => [...point]) : [];
+  element("calibration-fit").textContent = calibration?.mode === "white_lines" ? `${calibration.summary.valid_frames} / ${calibration.summary.frame_count} 帧匹配有效 · 耗时 ${calibration.summary.elapsed_s.toFixed(1)} s。需回看移动过程的线条重合情况；支持率不代表独立精度验收。` : calibration ? `拟合点残差 ${calibration.fit_rmse_m.toFixed(3)} m，仅用于检查点的拟合情况，不能证明轨迹精度。${calibration.note || ""}` : "尚无拟合结果。";
+  state.points = calibration?.image_points ? calibration.image_points.map((image, index) => ({ image: [...image], pitch: [...calibration.pitch_points[index]] })) : [];
+  state.roi = calibration?.roi ? calibration.roi.map((point) => [...point]) : [];
+  element("save-calibration").textContent = calibration?.mode === "white_lines" ? "保存验收状态" : "保存标定";
+  element("show-white-lines").disabled = calibration?.mode !== "white_lines";
+  element("next-calibration-failure").disabled = !Object.values(calibration?.frames || {}).some((record) => record.status !== "valid");
   state.draftDirty = false;
   if (!preserve) { state.selected = null; element("binding-start").value = manifest.start_frame; element("binding-end").value = manifest.end_frame; }
   renderBindings(); renderCalibrationPoints(); renderStatistics();
   await showFrame(preserve ? oldFrame : manifest.start_frame);
-  notify(calibration ? calibration.reviewed ? "运行已加载。点击球员，对照原图脚点与场地位置；有问题可按区间修正身份。" : "当前为演示标定草稿，场地位置仅供核对。检查白线、尺寸和可靠区域后，再确认生成报告。" : "轨迹已加载。先绑定球员，并在“场地标定”中点选对应点；米制统计在标定确认后启用。");
+  notify(calibration?.mode === "white_lines" ? "逐帧白线结果已加载。播放移动过程，核对黄色模型与原始白线是否持续重合。" : calibration ? calibration.reviewed ? "运行已加载。点击球员，对照原图脚点与场地位置；有问题可按区间修正身份。" : "当前为演示标定草稿，场地位置仅供核对。检查白线、尺寸和可靠区域后，再确认生成报告。" : "轨迹已加载。可在“场地标定”中填写尺寸并启动逐帧白线标定。");
+  watchCalibration(state.runId).catch((error) => notify(error.message, true));
 }
 
 async function initialize() {
@@ -385,10 +413,41 @@ async function initialize() {
   await loadRun(selectedId);
 }
 
+async function watchCalibration(runId) {
+  clearTimeout(state.calibrationTimer);
+  const job = await request(`/api/runs/${encodeURIComponent(runId)}/calibration-job`);
+  if (runId !== state.runId) return;
+  const running = job.status === "running";
+  element("auto-calibration").disabled = running;
+  element("auto-calibration").textContent = running ? "正在逐帧识别…" : "运行逐帧白线标定";
+  element("calibration-progress").textContent = running ? `已处理 ${job.processed_frames} / ${job.total_frames} 帧；完成后自动载入。` : job.status === "failed" ? `标定失败：${job.error}。原标定已保留。` : "填写实际球场尺寸即可开始；方向自动约定，不需要人工选择。";
+  if (running) state.calibrationTimer = setTimeout(() => watchCalibration(runId).catch((error) => notify(error.message, true)), 1000);
+  else if (job.status === "complete" && state.data.calibration?.calibration_id !== job.calibration_id) await loadRun(runId, true);
+}
+
 element("run-select").addEventListener("change", () => loadRun(element("run-select").value).catch((error) => notify(error.message, true)));
 element("reload").addEventListener("click", () => initialize().catch((error) => notify(error.message, true)));
 element("show-boxes").addEventListener("change", draw);
 element("show-unmatched").addEventListener("change", draw);
+element("show-white-lines").addEventListener("change", draw);
+element("show-pitch-model").addEventListener("change", draw);
+element("auto-calibration").addEventListener("click", async () => {
+  if (!state.data) return;
+  stopPlayback();
+  const runId = state.runId;
+  element("auto-calibration").disabled = true;
+  try {
+    await request(api("calibration-auto"), { pitch_length_m: Number(element("pitch-length").value), pitch_width_m: Number(element("pitch-width").value) });
+    await watchCalibration(runId);
+    notify("正在逐源帧识别白线并匹配场地几何，完成后可播放验收。");
+  } catch (error) { element("auto-calibration").disabled = false; notify(error.message, true); }
+});
+element("next-calibration-failure").addEventListener("click", () => {
+  const failures = Object.values(state.data?.calibration?.frames || {}).filter((record) => record.status !== "valid").map((record) => record.frame_index).sort((first, second) => first - second);
+  if (!failures.length) return;
+  stopPlayback();
+  showFrame(failures.find((frame) => frame > state.frame) ?? failures[0]).catch((error) => notify(error.message, true));
+});
 element("export-frame").addEventListener("click", async () => {
   if (!state.data || !state.image) return;
   stopPlayback();
@@ -494,6 +553,16 @@ for (const id of ["pitch-length", "pitch-width", "calibration-reference", "calib
 element("clear-points").addEventListener("click", () => { state.points = []; markDraftDirty(); renderCalibrationPoints(); draw(); });
 element("save-calibration").addEventListener("click", async () => {
   if (!state.data) return;
+  if (state.data.calibration?.mode === "white_lines" && state.points.length === 0) {
+    const calibration = state.data.calibration;
+    if (Number(element("pitch-length").value) !== calibration.pitch_length_m || Number(element("pitch-width").value) !== calibration.pitch_width_m) return notify("尺寸已改变，请重新运行逐帧标定后再验收。", true);
+    try {
+      await request(api("calibration-review"), { calibration_id: calibration.calibration_id, reviewed: element("calibration-reviewed").checked });
+      await loadRun(state.runId, true);
+      notify("逐帧标定验收状态已保存；失败帧仍不参与场地投影与跑动统计。");
+    } catch (error) { notify(error.message, true); }
+    return;
+  }
   const payload = { reference_frame: Number(element("calibration-reference").value), start_frame: Number(element("calibration-start").value), end_frame: Number(element("calibration-end").value), image_points: state.points.map((point) => point.image), pitch_points: state.points.map((point) => point.pitch), pitch_length_m: Number(element("pitch-length").value), pitch_width_m: Number(element("pitch-width").value), reviewed: element("calibration-reviewed").checked, note: state.data.calibration?.note || "人工点选标定" };
   if (state.roi.length) payload.roi = state.roi;
   try { await request(api("calibration"), payload); state.pointMode = false; state.roiMode = false; element("point-mode").textContent = "开始点选图像点"; element("roi-mode").textContent = "点选可靠区域"; await loadRun(state.runId, true); notify(payload.reviewed ? "标定已确认，可以生成统计报告。" : "标定草稿已保存，可在首、中、末帧对照白线叠加。"); } catch (error) { notify(error.message, true); }

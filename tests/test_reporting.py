@@ -112,6 +112,23 @@ class ReportingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "共线"):
             build_calibration({"video": {"width": 100, "height": 100}}, {"image_points": [[1, 1], [2, 2], [3, 3], [4, 4]], "pitch_points": [[0, 0], [10, 0], [10, 10], [0, 10]]})
 
+    def test_dynamic_calibration_snapshot_splits_statistics_at_failed_frames(self):
+        """动态失败帧保留无效原因，报告在恢复点切段，快照包含各帧映射。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir, _ = self.prepare_run(temporary)
+            original = read_yaml(run_dir / "calibration.yaml")
+            records = {str(frame): {"status": "valid", "homography": original["homography"], "roi": original["roi"]} for frame in range(10)}
+            records["5"] = {"status": "insufficient_geometry", "homography": None}
+            dynamic = {**original, "mode": "white_lines", "calibration_id": "lines_test", "summary": {"valid_frames": 9, "frame_count": 10}}
+            write_json(run_dir / "calibrations/lines_test/frames.json", records)
+            write_yaml(run_dir / "calibration.yaml", dynamic)
+            report = create_report(run_dir)
+            motions = list(read_rows(report / "motion.parquet"))
+            self.assertEqual(motions[5]["reason"], "calibration_unreliable")
+            self.assertIsNone(motions[6]["distance_delta_m"])
+            self.assertAlmostEqual(read_json(report / "summary.json")["players"][0]["valid_seconds"], 7 / 25)
+            self.assertEqual(read_yaml(report / "calibration.yaml")["frames"], records)
+
 
 if __name__ == "__main__":
     unittest.main()

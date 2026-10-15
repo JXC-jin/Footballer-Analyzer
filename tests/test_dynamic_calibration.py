@@ -1,12 +1,17 @@
 """验证白线自动标定在平移、变焦、遮挡与失效恢复时的几何正确性。"""
 
 import unittest
+from pathlib import Path
+import tempfile
 
 import cv2
 import numpy as np
 
 from footballer_analyzer.dynamic_calibration import WhiteLineCalibrator
+from footballer_analyzer.calibration import load_calibration, project_observation
 from footballer_analyzer.pitch_geometry import pitch_polylines, transform_points
+from footballer_analyzer.storage import read_json
+from footballer_analyzer.white_line_pipeline import create_line_run
 
 
 def synthetic_pitch(shift=0, zoom=1):
@@ -69,6 +74,41 @@ class DynamicCalibrationTests(unittest.TestCase):
         for length, width in [(float("nan"), 68), (105, 0), (50, 30)]:
             with self.assertRaises(ValueError):
                 WhiteLineCalibrator(length, width)
+
+    def test_projection_requires_exact_frame_and_never_reuses_failed_mapping(self):
+        """不同源帧使用各自 H；失败和缺帧均不借用相邻帧的映射。"""
+        roi = [[0, 0], [99, 0], [99, 99], [0, 99]]
+        calibration = {"mode": "white_lines", "start_frame": 0, "end_frame": 4, "height": 100, "pitch_length_m": 105, "pitch_width_m": 68, "frames": {
+            "0": {"status": "valid", "homography": np.eye(3).tolist(), "roi": roi},
+            "1": {"status": "valid", "homography": [[1, 0, -5], [0, 1, 0], [0, 0, 1]], "roi": roi},
+            "2": {"status": "insufficient_geometry", "homography": None},
+        }}
+        observation = {"bbox_x1": 8, "bbox_x2": 12, "bbox_y2": 20}
+        self.assertEqual(project_observation({**observation, "frame_index": 0}, calibration), (10, 20, None))
+        self.assertEqual(project_observation({**observation, "frame_index": 1}, calibration), (5, 20, None))
+        for frame_index in [2, 3]:
+            self.assertEqual(project_observation({**observation, "frame_index": frame_index}, calibration), (None, None, "calibration_unreliable"))
+        self.assertEqual(project_observation({**observation, "frame_index": 4}, calibration)[2], "outside_calibration_window")
+
+    def test_independent_review_run_persists_all_frames_and_invalid_evidence(self):
+        """独立验收运行无需人物模型，保存每帧映射、失败记录和透明白线掩膜。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            video = root / "moving.avi"
+            writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"MJPG"), 25, (960, 540))
+            for frame_index in range(3):
+                image, _ = synthetic_pitch(shift=frame_index * 4)
+                writer.write(image if frame_index != 1 else np.full_like(image, (45, 115, 55)))
+            writer.release()
+            run_dir = create_line_run(video, root / "outputs")
+            calibration = load_calibration(run_dir)
+            self.assertEqual(calibration["summary"]["frame_count"], 3)
+            self.assertEqual(calibration["summary"]["valid_frames"], 2)
+            self.assertIsNone(calibration["frames"]["1"]["homography"])
+            self.assertFalse(calibration["reviewed"])
+            self.assertEqual(read_json(run_dir / "manifest.json")["status"], "complete")
+            evidence = cv2.imread(str(run_dir / "calibrations" / calibration["calibration_id"] / "masks/1.png"), cv2.IMREAD_UNCHANGED)
+            self.assertEqual(evidence.shape[2], 4)
 
 
 if __name__ == "__main__":

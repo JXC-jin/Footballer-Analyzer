@@ -17,6 +17,15 @@ def main(argv=None):
     calibration_command = commands.add_parser("calibrate", help="从 YAML 对应点保存标定，也可在前端点选")
     calibration_command.add_argument("--run", required=True, type=Path)
     calibration_command.add_argument("--points", required=True, type=Path)
+    lines_command = commands.add_parser("calibrate-lines", help="逐帧白线标定；已有运行或独立视频均可验收")
+    lines_source = lines_command.add_mutually_exclusive_group(required=True)
+    lines_source.add_argument("--run", type=Path)
+    lines_source.add_argument("--video", type=Path)
+    lines_command.add_argument("--output-root", type=Path, default=ROOT / "outputs")
+    lines_command.add_argument("--pitch-length", type=float)
+    lines_command.add_argument("--pitch-width", type=float)
+    lines_command.add_argument("--start-frame", type=int, default=0)
+    lines_command.add_argument("--end-frame", type=int)
     report_command = commands.add_parser("report", help="复用缓存轨迹生成个人跑动报告")
     report_command.add_argument("--run", required=True, type=Path)
     history_command = commands.add_parser("history", help="查询球员在选定报告中的记录")
@@ -36,6 +45,15 @@ def main(argv=None):
             from .storage import read_yaml
 
             save_calibration(args.run.resolve(), read_yaml(args.points))
+        elif args.command == "calibrate-lines":
+            from .white_line_pipeline import calibrate_run, create_line_run
+
+            if args.run:
+                if args.start_frame != 0 or args.end_frame is not None:
+                    raise ValueError("--run 使用已有分析区间；--start-frame/--end-frame 仅适用于 --video")
+                calibrate_run(args.run.resolve(), args.pitch_length, args.pitch_width)
+            else:
+                create_line_run(args.video, args.output_root, args.pitch_length if args.pitch_length is not None else 105, args.pitch_width if args.pitch_width is not None else 68, args.start_frame, args.end_frame)
         elif args.command == "report":
             from .reporting import create_report
 
