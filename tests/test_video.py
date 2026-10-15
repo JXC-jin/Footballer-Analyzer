@@ -1,3 +1,5 @@
+"""用可解码的合成视频验证抽帧后的源帧号、时间与图像内容。"""
+
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,7 +11,10 @@ from footballer_analyzer.video import read_frames
 
 
 class VideoTests(unittest.TestCase):
+    """视频读取与采样时间语义的回归测试。"""
+
     def test_stride_keeps_source_frame_numbers_and_time(self):
+        """验证 stride=3 返回源帧 2/5/8，并保留真实时间和对应像素。"""
         with tempfile.TemporaryDirectory() as temporary:
             video_path = Path(temporary) / "source.avi"
             writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"MJPG"), 25, (64, 48))

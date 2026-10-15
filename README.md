@@ -102,6 +102,13 @@ node --check src/footballer_analyzer/web/app.js
 - `scripts/setup_bench_env.ps1`、`bench_cpu.py`、`bench_pipeline.py`：原调研基准工具，不替代上面的应用安装步骤。
 - `scripts/inspect_clip.py`：素材体检；`scripts/clone_refs.ps1`：本地获取参考源码。
 
+## Python 代码说明约定
+
+- 遵循 PEP 257，使用中文三双引号 docstring：文件开头说明模块职责，类和函数定义后说明用途。
+- 简单函数用一句话；复杂函数补充输入输出、单位、区间、状态或主要异常，避免逐行复述实现。
+- 帧号明确来自源视频，区间写为 `[start_frame, end_frame)`；说明位置用像素还是米、时间用秒还是帧。
+- 修改算法时同步更新对应说明；文档整理可通过去除 docstring 后比较 AST，检查执行逻辑是否改变。
+
 ## 第三方源码与素材
 
 `third_party/`、`data/`、`models/`、`outputs/`、虚拟环境及第三方版权截图均已被 `.gitignore` 排除。仓库不包含视频或模型权重，请使用有权使用的本地素材。第三方许可见 [01 仓库清单与许可](docs/01-参考仓库清单与许可.md)；当前检测依赖 Ultralytics（AGPL-3.0），沿用调研阶段的许可约束。

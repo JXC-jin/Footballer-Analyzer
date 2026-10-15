@@ -1,20 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-素材体检：判断一段视频能否用于本项目的分析流水线。
-================================================================
-回答三个问题：
-  1. 镜头怎么动？（静止 / 小幅随球平移 / 大幅摇摄 / 有变焦旋转）
-  2. 球员有多大？（决定检测与身份是否可行）
-  3. 镜头运动给"像素→米制"换算注入多少误差？（无需标定的估算）
+"""体检素材的镜头运动与人物框尺寸，输出像素统计和启发式风险判断。
 
-核心判据（不需要相机标定）：
-  用球员身高当尺子(约 1.8 m) -> 1px ≈ 1.8/h 米（h = 球员框高中位数）
-  相对误差 ≈ (每帧镜头位移px × 1.8/h) / (球员速度 / 帧率)
-  <=10% 理想 | <=20% 可接受 | >30% 单一单应性不可用，需逐帧补偿或动态标定
-
-用法:
-  .venv\\Scripts\\python.exe scripts\\inspect_clip.py --video data/clips/xxx.mp4
-  .venv\\Scripts\\python.exe scripts\\inspect_clip.py --video xxx.mp4 --no-detect   # 跳过检测，只测镜头
+用法：python scripts/inspect_clip.py --video data/clips/xxx.mp4。
+输出 docs/bench/<片段名>_inspect.json；身高比例估算不等于独立标定或距离精度验证。
 """
 from __future__ import annotations
 
@@ -31,6 +19,7 @@ OUT_DIR = ROOT / "docs" / "bench"
 
 
 def read_video_info(cap):
+    """返回已打开视频的宽、高、帧率和总帧数；无帧率值时使用 30 FPS。"""
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -39,7 +28,7 @@ def read_video_info(cap):
 
 
 def analyze_camera(video: str, sample_step: int = 1, work_w: int = 960):
-    """逐帧估计全局运动，分解为 平移 / 旋转 / 缩放。返回原始分辨率下的像素量。"""
+    """采样估计全局平移、旋转和缩放，返回原图像素运动统计；无有效配对返回 None。"""
     cap = cv2.VideoCapture(video)
     w, h, fps, n = read_video_info(cap)
     scale = w / work_w
@@ -95,6 +84,7 @@ def analyze_camera(video: str, sample_step: int = 1, work_w: int = 960):
 
 
 def analyze_players(video: str, sample_step: int = 5, imgsz: int = 640, conf: float = 0.25):
+    """用 YOLO 抽帧检测，返回人物数量、框高分布与运动球检出数量。"""
     from ultralytics import YOLO
     wts = ROOT / "models" / "yolov8n.pt"
     model = YOLO(str(wts) if wts.exists() else "yolov8n.pt")
@@ -132,7 +122,10 @@ def analyze_players(video: str, sample_step: int = 5, imgsz: int = 640, conf: fl
 
 
 def verdict(cam, ply, speed_kmh=18.0):
-    """speed_kmh: 用来估算"典型跑动"的参考速度（成年业余球员常见区间 12-25）。"""
+    """用镜头位移、框高和参考速度（km/h）生成风险文字，缺数据时说明原因。
+
+    假设球员身高 1.8 米，以身高比例估算镜头位移相对跑动位移的影响。
+    """
     if not cam:
         return "无法分析镜头运动"
     h_px = (ply or {}).get("bbox_h_median_px") or 0
@@ -162,6 +155,7 @@ def verdict(cam, ply, speed_kmh=18.0):
 
 
 def main():
+    """解析视频和采样参数，打印素材体检结果并保存镜头与人物统计 JSON。"""
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", required=True)
     ap.add_argument("--no-detect", action="store_true")

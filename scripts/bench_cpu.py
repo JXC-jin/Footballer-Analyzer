@@ -1,21 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-CPU / 核显 可行性基准测试
-=========================
-回答一个问题：**在 Ryzen 7 8745H + Radeon 780M（无 CUDA）上，
-一条足球视频分析流水线到底能不能跑、要跑多久。**
+"""测量 YOLO CPU/DirectML 推理与光流耗时，保存基准 JSON。
 
-测四件事：
-  1. YOLO 检测（ultralytics，PyTorch CPU）在 imgsz=640/960/1280 下的 ms/帧
-  2. 同一模型导出 ONNX 后，ONNX Runtime 的 CPU EP 与 DirectML EP（核显）对比
-  3. 相机运动补偿用的稀疏光流（goodFeaturesToTrack + calcOpticalFlowPyrLK）单帧开销
-  4. 按整场 90 分钟 × 30fps = 162000 帧，估算总耗时
-
-用法:
-    .venv\\Scripts\\python.exe scripts\\bench_cpu.py
-    .venv\\Scripts\\python.exe scripts\\bench_cpu.py --frames 30 --imgsz 640,960
-输出:
-    docs/bench/bench_result.json  +  控制台表格
+用法：python scripts/bench_cpu.py --frames 20 --imgsz 640,960。
+输出 docs/bench/bench_result.json；整场耗时为外推估计，不代表完整流水线实测。
 """
 from __future__ import annotations
 
@@ -38,11 +25,12 @@ CANDIDATE_VIDEOS = [
 
 
 def log(msg: str) -> None:
+    """打印并立即刷新一条基准进度消息。"""
     print(msg, flush=True)
 
 
 def load_sample_frame():
-    """取一张真实的 1080p 比赛画面；没有就用合成噪声图兜底。"""
+    """返回示例视频首帧与来源名称；无可用视频时返回 1080p 合成噪声图。"""
     import cv2
     import numpy as np
 
@@ -59,7 +47,7 @@ def load_sample_frame():
 
 
 def timeit(fn, n: int, warmup: int = 3) -> float:
-    """返回单次调用的平均秒数。"""
+    """先预热 warmup 次，再对 n 次调用计时，返回平均秒数；n 须为正整数。"""
     for _ in range(warmup):
         fn()
     t0 = time.perf_counter()
@@ -69,7 +57,7 @@ def timeit(fn, n: int, warmup: int = 3) -> float:
 
 
 def bench_torch_yolo(frame, sizes, frames_n: int):
-    """ultralytics YOLO 在 PyTorch CPU 上的端到端 predict 耗时（含前后处理）。"""
+    """按输入尺寸测量 YOLO CPU predict，返回含前后处理的毫秒/FPS 记录列表。"""
     import torch
     from ultralytics import YOLO
 
@@ -97,7 +85,7 @@ def bench_torch_yolo(frame, sizes, frames_n: int):
 
 
 def bench_onnx(frame, sizes, frames_n: int, weights="yolov8n.pt"):
-    """导出 ONNX，对比 ONNX Runtime 的 CPU EP / DirectML EP（核显）。"""
+    """导出 ONNX 并对比可用 CPU/DirectML 后端，返回推理计时记录；失败配置跳过。"""
     import numpy as np
     import onnxruntime as ort
     from ultralytics import YOLO
@@ -147,7 +135,7 @@ def bench_onnx(frame, sizes, frames_n: int, weights="yolov8n.pt"):
 
 
 def bench_optical_flow(frame, frames_n: int = 20):
-    """相机运动补偿常见做法：稀疏光流（LK）单帧开销。"""
+    """对同一图像测量稀疏 LK 与稠密 Farneback 光流，返回毫秒/FPS 记录列表。"""
     import cv2
     import numpy as np
 
@@ -157,6 +145,7 @@ def bench_optical_flow(frame, frames_n: int = 20):
     mask[int(gray.shape[0] * 0.55):, :] = 255  # 只看下半场（草地），与教学项目一致
 
     def lk():
+        """提取下半图角点并计算稀疏光流；无角点时返回 None。"""
         p0 = cv2.goodFeaturesToTrack(gray, maxCorners=100, qualityLevel=0.3, minDistance=3, mask=mask)
         if p0 is None:
             return None
@@ -169,6 +158,7 @@ def bench_optical_flow(frame, frames_n: int = 20):
                     "ms_per_frame": round(dt * 1000, 1), "fps": round(1 / dt, 1)})
 
     def farneback():
+        """计算当前灰度图到自身的稠密光流，供耗时比较。"""
         return cv2.calcOpticalFlowFarneback(gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
 
     try:
@@ -182,6 +172,7 @@ def bench_optical_flow(frame, frames_n: int = 20):
 
 
 def main():
+    """解析基准参数，执行可用测试并打印外推耗时，将结果写入 JSON。"""
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames", type=int, default=20, help="每个配置测多少帧")
     ap.add_argument("--imgsz", type=str, default="640,960,1280")

@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-端到端吞吐基准：检测 + ByteTrack 跟踪 + 视频解码，跑真实 1080p 比赛片段。
-回答"整场 90 分钟视频，这台机器要处理多久"。
+"""测量示例视频解码、CPU 检测和 ByteTrack 的端到端吞吐。
 
-用法: .venv\\Scripts\\python.exe scripts\\bench_pipeline.py --frames 300
-输出: docs/bench/pipeline_result.json
+用法：python scripts/bench_pipeline.py --frames 300。
+输出 docs/bench/pipeline_result.json；整场耗时外推按源视频 30 FPS 假设计算。
 """
 from __future__ import annotations
 
@@ -20,6 +18,7 @@ VIDEO = ROOT / "third_party" / "Football-Vision" / "videos" / "Demo_Video.mp4"
 
 
 def main():
+    """处理指定数量的采样帧，汇总检测框、轨迹数、吞吐与估计耗时并写入 JSON。"""
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames", type=int, default=300)
     ap.add_argument("--model", default="yolov8n.pt")

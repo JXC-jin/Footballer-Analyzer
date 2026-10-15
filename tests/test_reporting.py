@@ -1,3 +1,5 @@
+"""用合成视频验收报告产物、身份纠错重算、版本选择和标定门禁。"""
+
 from pathlib import Path
 import tempfile
 import unittest
@@ -14,7 +16,10 @@ from footballer_analyzer.storage import TRACK_SCHEMA, RowWriter, file_hash, read
 
 
 class ReportingTests(unittest.TestCase):
+    """报告生成与复盘数据一致性的集成回归测试。"""
+
     def prepare_run(self, temporary):
+        """在临时目录构造已绑定、已标定的十帧运行，返回运行目录与清单。"""
         root = Path(temporary)
         video_path = root / "source.avi"
         writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"MJPG"), 25, (64, 48))
@@ -38,6 +43,7 @@ class ReportingTests(unittest.TestCase):
         return run_dir, manifest
 
     def test_report_recompute_preserves_tracks_and_rejects_duplicate_history(self):
+        """验证产物可读取、汇总一致、重算保留原始轨迹且历史不重复累计。"""
         with tempfile.TemporaryDirectory() as temporary:
             run_dir, manifest = self.prepare_run(temporary)
             original_hash = file_hash(run_dir / "tracks.parquet")
@@ -59,6 +65,7 @@ class ReportingTests(unittest.TestCase):
                 history("player_001", [first, second])
 
     def test_draft_calibration_prevents_statistics(self):
+        """未确认的标定草稿必须阻止个人统计报告生成。"""
         with tempfile.TemporaryDirectory() as temporary:
             run_dir, manifest = self.prepare_run(temporary)
             calibration = read_yaml(run_dir / "calibration.yaml")
@@ -68,6 +75,7 @@ class ReportingTests(unittest.TestCase):
                 create_report(run_dir)
 
     def test_identity_correction_changes_report_without_changing_tracks(self):
+        """身份拆分后重算更新统计并切断边界，保留旧版本且正确选取同秒最新报告。"""
         with tempfile.TemporaryDirectory() as temporary:
             run_dir, manifest = self.prepare_run(temporary)
             original_hash = file_hash(run_dir / "tracks.parquet")
@@ -100,6 +108,7 @@ class ReportingTests(unittest.TestCase):
             self.assertFalse(latest["stale"])
 
     def test_collinear_calibration_points_are_rejected(self):
+        """拒绝不能确定二维单应性的共线标定点。"""
         with self.assertRaisesRegex(ValueError, "共线"):
             build_calibration({"video": {"width": 100, "height": 100}}, {"image_points": [[1, 1], [2, 2], [3, 3], [4, 4]], "pitch_points": [[0, 0], [10, 0], [10, 10], [0, 10]]})
 

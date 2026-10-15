@@ -1,3 +1,5 @@
+"""启动临时回环 HTTP 服务，验证源帧读取以及路径、Host 和写入来源边界。"""
+
 from http.server import ThreadingHTTPServer
 import json
 import tempfile
@@ -14,7 +16,10 @@ import test_reporting
 
 
 class ServerTests(unittest.TestCase):
+    """本地复盘 API 的读操作与输入边界测试。"""
+
     def test_local_api_frame_and_input_boundaries(self):
+        """验证运行列表与 JPEG 帧可读，越界帧、非法路径、跨源写入和错误 Host 被拒绝。"""
         with tempfile.TemporaryDirectory() as temporary:
             run_dir, manifest = test_reporting.ReportingTests().prepare_run(temporary)
             server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(ReviewApp(temporary)))
