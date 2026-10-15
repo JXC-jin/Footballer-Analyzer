@@ -1,0 +1,83 @@
+{
+  "sample": "third_party\\Football-Vision\\videos\\Demo_Video.mp4",
+  "machine": {
+    "cpu": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "os": "Windows-11-10.0.26200-SP0"
+  },
+  "results": [
+    {
+      "backend": "torch-cpu",
+      "model": "yolov8n.pt",
+      "imgsz": 640,
+      "ms_per_frame": 26.7,
+      "fps": 37.5,
+      "match_hours_est": 1.2
+    },
+    {
+      "backend": "torch-cpu",
+      "model": "yolov8n.pt",
+      "imgsz": 960,
+      "ms_per_frame": 48.5,
+      "fps": 20.6
+    },
+    {
+      "backend": "torch-cpu",
+      "model": "yolov8n.pt",
+      "imgsz": 1280,
+      "ms_per_frame": 79.4,
+      "fps": 12.6
+    },
+    {
+      "backend": "torch-cpu",
+      "model": "yolo11n.pt",
+      "imgsz": 640,
+      "ms_per_frame": 28.7,
+      "fps": 34.9,
+      "match_hours_est": 1.3
+    },
+    {
+      "backend": "torch-cpu",
+      "model": "yolo11n.pt",
+      "imgsz": 960,
+      "ms_per_frame": 76.2,
+      "fps": 13.1
+    },
+    {
+      "backend": "torch-cpu",
+      "model": "yolo11n.pt",
+      "imgsz": 1280,
+      "ms_per_frame": 133.7,
+      "fps": 7.5
+    },
+    {
+      "backend": "onnx-DmlExecutionProvider",
+      "model": "yolov8n.pt",
+      "imgsz": 640,
+      "ms_per_frame": 11.8,
+      "fps": 84.9,
+      "match_hours_est": 0.5
+    },
+    {
+      "backend": "onnx-CPUExecutionProvider",
+      "model": "yolov8n.pt",
+      "imgsz": 640,
+      "ms_per_frame": 57.2,
+      "fps": 17.5,
+      "match_hours_est": 2.6
+    },
+    {
+      "backend": "opencv",
+      "model": "sparse-LK-optical-flow",
+      "imgsz": 1920,
+      "ms_per_frame": 60.7,
+      "fps": 16.5
+    },
+    {
+      "backend": "opencv",
+      "model": "farneback-dense-flow",
+      "imgsz": 1920,
+      "ms_per_frame": 555.7,
+      "fps": 1.8
+    }
+  ]
+}

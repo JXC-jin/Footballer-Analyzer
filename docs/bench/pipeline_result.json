@@ -1,0 +1,15 @@
+{
+  "config": {
+    "frames": 150,
+    "model": "yolov8n.pt",
+    "imgsz": 640,
+    "stride": 3
+  },
+  "frames_processed": 150,
+  "wall_seconds": 11.4,
+  "throughput_fps": 13.2,
+  "realtime_factor": 1.32,
+  "match_90min_hours": 1.1,
+  "avg_boxes_per_frame": 9.9,
+  "unique_track_ids": 104
+}

@@ -1,0 +1,87 @@
+# ============================================================
+# FootballerAnalyzer .gitignore
+# 目的：第三方参考源码、模型权重、视频、数据集一律不进仓库
+# ============================================================
+
+# --- 第三方参考源码（本地调研用，浅克隆到这里）---
+third_party/
+refs/
+external/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.log
+
+# --- 模型权重 / 导出模型 ---
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.weights
+*.safetensors
+*.ckpt
+*.caffemodel
+*.bin
+weights/
+models/
+checkpoints/
+
+# --- 视频 / 图像数据 / 数据集 ---
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.flv
+*.webm
+*.ts
+data/
+datasets/
+videos/
+frames/
+outputs/
+runs/
+tracking_output/
+
+# --- Notebook / 中间产物 ---
+*.csv
+*.parquet
+*.h5
+*.pkl
+*.npy
+*.npz
+*.feather
+*.jsonl
+# 例外：文档/配置里需要跟踪的少量结构化文件
+!docs/**/*.csv
+!configs/**/*.json
+
+# --- 密钥与环境变量 ---
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# --- 编辑器 / 系统 ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
