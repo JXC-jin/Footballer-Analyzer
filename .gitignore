@@ -85,3 +85,7 @@ secrets/
 Thumbs.db
 desktop.ini
 *.swp
+
+# --- 引用素材 / 证据图（含第三方版权画面，本仓库为 public，不入库；仅本地保留）---
+docs/image.png
+docs/bench/*.png
