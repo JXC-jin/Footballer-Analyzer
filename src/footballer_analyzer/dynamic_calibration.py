@@ -84,6 +84,10 @@ class WhiteLineCalibrator:
         points = self.model[visible] / [self.length, self.width]
         if len(points) < 100:
             return matrix
+        groups, counts = np.unique(self.groups[visible], return_counts=True)
+        weights = np.ones(len(points))
+        for group, count in zip(groups, counts):
+            weights[self.groups[visible] == group] = np.clip(np.sqrt(50 / count), 0.6, 2.5)
         normalized = np.diag([1 / width, 1 / width, 1]) @ matrix @ np.diag([self.length, self.width, 1])
         normalized /= normalized[2, 2]
         smooth = gaussian_filter(distance.astype(float), 0.8)
@@ -95,7 +99,7 @@ class WhiteLineCalibrator:
                 return np.full(len(points), 1000.0)
             sampled = map_coordinates(smooth, [projected[:, 1], projected[:, 0]], order=1, mode="nearest")
             outside = np.maximum(0, -projected[:, 0]) + np.maximum(0, projected[:, 0] - width + 1) + np.maximum(0, -projected[:, 1]) + np.maximum(0, projected[:, 1] - height + 1)
-            return sampled + outside
+            return (sampled + outside) * weights
 
         result = least_squares(residual, normalized.ravel()[:8], loss="soft_l1", f_scale=3, max_nfev=45, diff_step=1e-4)
         fitted = np.diag([width, width, 1]) @ np.append(result.x, 1).reshape(3, 3) @ np.diag([1 / self.length, 1 / self.width, 1])

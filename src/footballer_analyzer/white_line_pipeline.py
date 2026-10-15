@@ -9,7 +9,7 @@ import numpy as np
 
 from .config import Config, ROOT
 from .dynamic_calibration import WhiteLineCalibrator
-from .pitch_geometry import pitch_polylines, transform_points
+from .pitch_geometry import transform_points
 from .storage import TRACK_SCHEMA, RowWriter, file_hash, new_id, read_json, write_json, write_yaml
 from .video import inspect_video
 

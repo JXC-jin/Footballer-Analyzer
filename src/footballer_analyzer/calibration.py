@@ -1,4 +1,4 @@
-"""建立图像到米制场地的单应性；校验对应点、可靠区域、适用窗口和确认状态。"""
+"""管理静态及逐帧米制场地映射；校验版本、可靠区域、适用窗口与验收状态。"""
 
 from pathlib import Path
 import math
@@ -69,7 +69,7 @@ def validate_calibration(calibration, manifest, require_reviewed=True):
     if calibration["video_sha256"] != manifest["video_sha256"] or calibration["width"] != manifest["video"]["width"] or calibration["height"] != manifest["video"]["height"]:
         raise ValueError("标定与源视频不匹配")
     if require_reviewed and calibration.get("reviewed") is not True:
-        raise ValueError("标定为草稿：请检查首、中、末帧后确认，再生成统计报告")
+        raise ValueError("标定为草稿：请回看白线叠加并确认实际尺寸，再生成统计报告")
     if calibration.get("mode") == "white_lines" and not any(record.get("homography") is not None for record in calibration.get("frames", {}).values()):
         raise ValueError("逐帧标定没有可靠映射，请先检查白线识别结果")
 

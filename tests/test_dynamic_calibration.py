@@ -9,7 +9,7 @@ import numpy as np
 
 from footballer_analyzer.dynamic_calibration import WhiteLineCalibrator
 from footballer_analyzer.calibration import load_calibration, project_observation
-from footballer_analyzer.pitch_geometry import pitch_polylines, transform_points
+from footballer_analyzer.pitch_geometry import extract_white_lines, pitch_polylines, transform_points
 from footballer_analyzer.storage import read_json
 from footballer_analyzer.white_line_pipeline import create_line_run
 
@@ -74,6 +74,13 @@ class DynamicCalibrationTests(unittest.TestCase):
         for length, width in [(float("nan"), 68), (105, 0), (50, 30)]:
             with self.assertRaises(ValueError):
                 WhiteLineCalibrator(length, width)
+
+    def test_sunlit_line_uses_saturation_when_brightness_contrast_is_low(self):
+        """强光下草地与白线亮度接近时，仍利用饱和度差检出连续线条。"""
+        image = np.full((540, 960, 3), (150, 245, 200), np.uint8)
+        cv2.line(image, (40, 250), (920, 250), (230, 247, 235), 3)
+        _, mask, _, _ = extract_white_lines(image)
+        self.assertGreater(np.count_nonzero(mask[248:253]), 2000)
 
     def test_projection_requires_exact_frame_and_never_reuses_failed_mapping(self):
         """不同源帧使用各自 H；失败和缺帧均不借用相邻帧的映射。"""

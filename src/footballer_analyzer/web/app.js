@@ -39,7 +39,7 @@ function bindingFor(row) {
 function calibrationAt(frameIndex) {
   const calibration = state.data.calibration;
   if (calibration?.mode !== "white_lines") return calibration;
-  const record = calibration.frames[String(frameIndex)];
+  const record = calibration.frames?.[String(frameIndex)];
   return record?.status === "valid" && record.homography ? { ...calibration, homography: record.homography, roi: record.roi } : null;
 }
 
@@ -222,7 +222,7 @@ function draw() {
   drawPitch(observations);
   const calibration = state.data.calibration;
   if (calibration?.mode === "white_lines") {
-    const record = calibration.frames[String(state.frame)];
+    const record = calibration.frames?.[String(state.frame)];
     const valid = record?.status === "valid";
     element("stat-calibration").textContent = valid ? "逐帧有效" : "本帧失效";
     element("pitch-mode").textContent = valid ? calibration.reviewed ? "逐帧米制投影" : "逐帧 · 待验收" : "白线不足 · 暂停投影";
@@ -259,7 +259,8 @@ async function showFrame(frameIndex) {
   if (!state.data) return;
   const manifest = state.data.manifest;
   const bounded = Math.min(manifest.end_frame - 1, Math.max(manifest.start_frame, frameIndex));
-  const aligned = manifest.start_frame + Math.floor((bounded - manifest.start_frame) / manifest.config.stride) * manifest.config.stride;
+  const step = state.data.calibration?.mode === "white_lines" ? 1 : manifest.config.stride;
+  const aligned = manifest.start_frame + Math.floor((bounded - manifest.start_frame) / step) * step;
   const requestId = ++state.requestId;
   const image = new Image();
   const loaded = new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error("无法读取视频帧，请检查源视频是否仍存在")); });
@@ -297,7 +298,8 @@ async function play() {
   state.playing = true; element("play").textContent = "Ⅱ"; element("play").setAttribute("aria-label", "暂停");
   while (state.playing) {
     const manifest = state.data.manifest;
-    const step = Math.max(manifest.config.stride, Math.round(manifest.video.fps / 10 * Number(element("playback-rate").value) / manifest.config.stride) * manifest.config.stride);
+    const sampling = state.data.calibration?.mode === "white_lines" ? 1 : manifest.config.stride;
+    const step = Math.max(sampling, Math.round(manifest.video.fps / 10 * Number(element("playback-rate").value) / sampling) * sampling);
     if (state.frame + step >= manifest.end_frame) { stopPlayback(); break; }
     try { await showFrame(state.frame + step); } catch (error) { notify(error.message, true); stopPlayback(); }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -373,8 +375,9 @@ async function loadRun(runId, preserve = false) {
   for (const row of data.latest_report?.motion || []) state.motionRows.set(`${row.frame_index}:${row.track_id}`, row);
   const manifest = data.manifest;
   const calibration = data.calibration;
-  const slider = element("frame-slider"); slider.min = manifest.start_frame; slider.max = manifest.end_frame - 1; slider.step = manifest.config.stride;
-  element("frame-number").min = manifest.start_frame; element("frame-number").max = manifest.end_frame - 1; element("frame-number").step = manifest.config.stride;
+  const sourceStep = calibration?.mode === "white_lines" ? 1 : manifest.config.stride;
+  const slider = element("frame-slider"); slider.min = manifest.start_frame; slider.max = manifest.end_frame - 1; slider.step = sourceStep;
+  element("frame-number").min = manifest.start_frame; element("frame-number").max = manifest.end_frame - 1; element("frame-number").step = sourceStep;
   element("video-canvas").width = manifest.video.width; element("video-canvas").height = manifest.video.height;
   element("source-description").textContent = `${manifest.config.clip_id} · ${manifest.config.match_id} · ${data.catalog.length} 条轨迹`;
   element("video-spec").textContent = `${manifest.video.width}×${manifest.video.height} · ${manifest.video.fps.toFixed(0)} FPS`;
@@ -487,7 +490,7 @@ element("export-frame").addEventListener("click", async () => {
   } catch { notify("导出失败，请重试。", true); }
 });
 element("play").addEventListener("click", play);
-for (const [id, direction] of [["previous-frame", -1], ["next-frame", 1]]) element(id).addEventListener("click", () => { stopPlayback(); if (state.data) showFrame(state.frame + direction * state.data.manifest.config.stride).catch((error) => notify(error.message, true)); });
+for (const [id, direction] of [["previous-frame", -1], ["next-frame", 1]]) element(id).addEventListener("click", () => { stopPlayback(); if (state.data) showFrame(state.frame + direction * (state.data.calibration?.mode === "white_lines" ? 1 : state.data.manifest.config.stride)).catch((error) => notify(error.message, true)); });
 element("frame-slider").addEventListener("input", () => { stopPlayback(); showFrame(Number(element("frame-slider").value)).catch((error) => notify(error.message, true)); });
 element("frame-number").addEventListener("change", () => { stopPlayback(); showFrame(Number(element("frame-number").value)).catch((error) => notify(error.message, true)); });
 element("jump-frame").addEventListener("click", () => { stopPlayback(); showFrame(Number(element("frame-number").value)).catch((error) => notify(error.message, true)); });

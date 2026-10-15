@@ -64,7 +64,8 @@ def extract_white_lines(image, work_width=960):
             turf = cv2.dilate(turf, np.ones((9, 9), np.uint8))
     value = hsv[:, :, 2]
     contrast = cv2.morphologyEx(value, cv2.MORPH_TOPHAT, np.ones((13, 13), np.uint8))
-    white = ((hsv[:, :, 1] < 150) & (value > 110) & (contrast > 16) & (turf > 0) & (neighborhood > 0.45)).astype(np.uint8) * 255
+    saturation_contrast = cv2.morphologyEx(hsv[:, :, 1], cv2.MORPH_BLACKHAT, np.ones((13, 13), np.uint8))
+    white = ((hsv[:, :, 1] < 150) & (value > 110) & ((contrast > 16) | (saturation_contrast > 18)) & (turf > 0) & (neighborhood > 0.45)).astype(np.uint8) * 255
     component_count, labels, stats, _ = cv2.connectedComponentsWithStats(white)
     for component in range(1, component_count):
         if stats[component, cv2.CC_STAT_AREA] < 5:
