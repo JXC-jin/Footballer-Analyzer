@@ -10,7 +10,7 @@ import numpy as np
 
 from footballer_analyzer.calibration import build_calibration, save_calibration
 from footballer_analyzer.config import Config
-from footballer_analyzer.reporting import create_report, history
+from footballer_analyzer.reporting import create_report, draw_pitch, history
 from footballer_analyzer.server import ReviewApp
 from footballer_analyzer.storage import TRACK_SCHEMA, RowWriter, file_hash, read_json, read_rows, read_yaml, write_json, write_yaml
 
@@ -73,6 +73,31 @@ class ReportingTests(unittest.TestCase):
             write_yaml(run_dir / "calibration.yaml", calibration)
             with self.assertRaisesRegex(ValueError, "草稿"):
                 create_report(run_dir)
+
+    def test_eight_report_preserves_model_and_draws_independent_penalty_area(self):
+        """八人制报告保留几何快照，禁区绘图采用十二米深度而非十一人制参数。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir, _ = self.prepare_run(temporary)
+            original_hash = file_hash(run_dir / "tracks.parquet")
+            calibration = save_calibration(run_dir, {
+                "pitch_model": "eight", "reviewed": True,
+                "point_pairs": [
+                    {"landmark_id": "left_corner_far", "image": [0, 0]},
+                    {"landmark_id": "right_corner_far", "image": [63, 0]},
+                    {"landmark_id": "right_corner_near", "image": [63, 47]},
+                    {"landmark_id": "left_corner_near", "image": [0, 47]},
+                ],
+            })
+            report = create_report(run_dir)
+            saved = read_yaml(report / "calibration.yaml")
+            self.assertEqual(saved["pitch_spec"], calibration["pitch_spec"])
+            self.assertEqual(saved["pitch_model"], "eight")
+            self.assertEqual(file_hash(run_dir / "tracks.parquet"), original_hash)
+            self.assertTrue((report / "review.mp4").is_file())
+            image = np.zeros((501, 681, 3), dtype=np.uint8)
+            draw_pitch(image, 0, 0, 680, 500, 68, 50, saved["pitch_spec"])
+            self.assertGreater(int(image[200, 120, 0]), 100)
+            self.assertEqual(int(image[200, 165, 0]), 38)
 
     def test_identity_correction_changes_report_without_changing_tracks(self):
         """身份拆分后重算更新统计并切断边界，保留旧版本且正确选取同秒最新报告。"""

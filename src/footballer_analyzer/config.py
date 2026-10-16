@@ -6,6 +6,8 @@ import math
 
 import yaml
 
+from .pitch_models import pitch_spec
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -35,6 +37,8 @@ class Config:
     speed_limit_mps: float = 12.0
     min_cutoff_hz: float = 1.0
     filter_beta: float = 0.0
+    pitch_model: str = "eleven"
+    calibration_method: str = "white_lines"
 
     def snapshot(self):
         """返回可序列化配置，将 Path 转为字符串。"""
@@ -53,6 +57,10 @@ def load_config(path: str | Path) -> Config:
 def config_from_dict(payload: dict) -> Config:
     """补齐默认路径并构造配置；校验帧区间、数值范围和比赛标识。"""
     values = dict(payload)
+    if values.get("pitch_model") == "eight":
+        values.setdefault("pitch_length_m", 68.0)
+        values.setdefault("pitch_width_m", 50.0)
+        values.setdefault("calibration_method", "manual")
     for key, default in [("output_root", "outputs"), ("players", "data/players.yaml")]:
         values.setdefault(key, default)
     for key in ["video", "weights", "output_root", "players"]:
@@ -61,6 +69,11 @@ def config_from_dict(payload: dict) -> Config:
         candidate = Path(values[key])
         values[key] = candidate.resolve() if candidate.is_absolute() else (ROOT / candidate).resolve()
     config = Config(**values)
+    pitch_spec(config.pitch_model, config.pitch_length_m, config.pitch_width_m)
+    if config.calibration_method not in {"manual", "white_lines"}:
+        raise ValueError("标定方式仅支持 manual 或 white_lines")
+    if config.pitch_model == "eight" and config.calibration_method != "manual":
+        raise ValueError("八人制目前仅支持手动固定标定")
     for key in ["start_frame", "stride", "imgsz", "period"]:
         value = getattr(config, key)
         if type(value) is not int or value < (0 if key == "start_frame" else 1):

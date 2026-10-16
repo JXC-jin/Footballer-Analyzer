@@ -10,6 +10,7 @@ import numpy as np
 from .config import Config, ROOT
 from .dynamic_calibration import WhiteLineCalibrator
 from .pitch_geometry import transform_points
+from .pitch_models import pitch_spec
 from .storage import TRACK_SCHEMA, RowWriter, file_hash, new_id, read_json, write_json, write_yaml
 from .video import inspect_video
 
@@ -92,6 +93,7 @@ def calibrate_run(run_dir, length=None, width=None, progress=None):
     summary["valid_ratio"] = summary["valid_frames"] / len(records)
     calibration = {
         "schema_version": 2, "mode": "white_lines", "calibration_id": calibration_id,
+        "pitch_model": "eleven", "pitch_spec": pitch_spec("eleven", length, width),
         "video_sha256": manifest["video_sha256"], "width": manifest["video"]["width"], "height": manifest["video"]["height"],
         "reference_frame": manifest["start_frame"], "start_frame": manifest["start_frame"], "end_frame": end_frame,
         "pitch_length_m": length, "pitch_width_m": width, "reviewed": False,

@@ -15,17 +15,19 @@ import matplotlib.pyplot as plt
 from .calibration import load_calibration, project_observation, validate_calibration
 from .identity import load_players, resolve_identity, validate_bindings
 from .metrics import MOTION_SCHEMA, SUMMARY_SCHEMA, calculate_motion, summarize
+from .pitch_geometry import pitch_polylines
 from .storage import RowWriter, file_hash, new_id, read_json, read_rows, read_yaml, write_json, write_yaml
 from .video import read_frames
 
 
-def draw_pitch(image, left, top, width, height, length_m, width_m):
-    """在 BGR 图像的指定像素区域原地绘制简化球场，比例按米制尺寸计算。"""
+def draw_pitch(image, left, top, width, height, length_m, width_m, spec=None, model="eleven"):
+    """在像素区域按保存的场地几何绘图，与前端使用相同米制折线。"""
     cv2.rectangle(image, (left, top), (left + width, top + height), (38, 75, 49), -1)
-    cv2.rectangle(image, (left, top), (left + width, top + height), (170, 200, 180), 1)
-    cv2.line(image, (left + width // 2, top), (left + width // 2, top + height), (170, 200, 180), 1)
-    radius_m = min(9.15, width_m / 5)
-    cv2.ellipse(image, (left + width // 2, top + height // 2), (round(width * radius_m / length_m), round(height * radius_m / width_m)), 0, 0, 360, (170, 200, 180), 1)
+    for _, points in pitch_polylines(length_m, width_m, model=model, spec=spec):
+        pixels = np.rint(points * [width / length_m, height / width_m] + [left, top]).astype(np.int32)
+        pixels[:, 0] = np.clip(pixels[:, 0], left, left + width)
+        pixels[:, 1] = np.clip(pixels[:, 1], top, top + height)
+        cv2.polylines(image, [pixels], False, (170, 200, 180), 1, cv2.LINE_AA)
 
 
 def render_review(run_dir, report_dir, manifest, calibration, bindings):
@@ -42,7 +44,7 @@ def render_review(run_dir, report_dir, manifest, calibration, bindings):
     try:
         for packet in read_frames(Path(manifest["config"]["video"]), manifest["start_frame"], manifest["end_frame"], manifest["config"]["stride"]):
             frame = packet.image
-            draw_pitch(frame, 20, 20, pitch_width, pitch_height, calibration["pitch_length_m"], calibration["pitch_width_m"])
+            draw_pitch(frame, 20, 20, pitch_width, pitch_height, calibration["pitch_length_m"], calibration["pitch_width_m"], calibration.get("pitch_spec"), calibration.get("pitch_model", "eleven"))
             for row in rows_by_frame[packet.frame_index]:
                 player_id, team_id, _, reason = resolve_identity(row, bindings)
                 if reason == "excluded":
@@ -84,7 +86,11 @@ def render_charts(report_dir, motions, summary, players, calibration):
             weights=[row["delta_t_s"] for row in heat_rows],
         )
         axes[1].imshow(heatmap.T, extent=[0, calibration["pitch_length_m"], calibration["pitch_width_m"], 0], cmap="YlGn", aspect="equal")
+        for _, points in pitch_polylines(calibration["pitch_length_m"], calibration["pitch_width_m"], spec=calibration.get("pitch_spec"), model=calibration.get("pitch_model", "eleven")):
+            axes[1].plot(points[:, 0], points[:, 1], color="#668466", linewidth=0.6)
         axes[1].set(xlabel="Pitch x (m)", ylabel="Pitch y (m)", title="Time-weighted occupancy (s)")
+        axes[1].set_xlim(0, calibration["pitch_length_m"])
+        axes[1].set_ylim(calibration["pitch_width_m"], 0)
         figure.suptitle(player_id)
         figure.savefig(report_dir / f"{player_id.encode('utf-8').hex()}.png", dpi=120)
         plt.close(figure)

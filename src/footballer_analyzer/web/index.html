@@ -31,9 +31,10 @@
         <div class="source-controls">
           <label>本地视频素材<select id="clip-select" aria-label="选择视频素材"><option value="">正在读取素材…</option></select></label>
           <p id="clip-detail" class="hint">素材来自 data/clips，可刷新列表发现新视频。</p>
+          <div class="form-row"><label>分析场地模型<select id="analysis-model"><option value="eleven">十一人制</option><option value="eight">八人制 · 68 × 50 m</option></select></label><label>分析标定方式<select id="analysis-method"><option value="white_lines">逐帧白线 · 运动镜头</option><option value="manual">手动固定 · 固定镜头</option></select></label></div>
           <div class="form-row">
-            <label>场地长 · m<input id="analysis-length" type="number" min="90" max="120" step="0.1" value="105"></label>
-            <label>场地宽 · m<input id="analysis-width" type="number" min="60" max="90" step="0.1" value="68"></label>
+            <label>场地长 · m<input id="analysis-length" type="number" min="1" step="0.1" value="105"></label>
+            <label>场地宽 · m<input id="analysis-width" type="number" min="1" step="0.1" value="68"></label>
             <label>人物检测精度<select id="analysis-imgsz"><option value="1920">1920 · 精度优先</option><option value="1280">1280 · 速度优先</option></select></label>
           </div>
           <details class="analysis-window"><summary>限定分析区间（可选）</summary><div class="form-row"><label>开始源帧（含）<input id="analysis-start" type="number" min="0" step="1" value="0"></label><label>结束源帧（不含，留空至末尾）<input id="analysis-end" type="number" min="1" step="1" placeholder="视频末尾"></label></div></details>

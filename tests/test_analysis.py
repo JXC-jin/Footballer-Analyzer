@@ -66,6 +66,44 @@ class AnalysisTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     app.clip_path(invalid)
 
+    def test_eight_manual_analysis_skips_white_lines_and_keeps_run(self):
+        """八人制默认等待手动标定，不构造或运行十一人制自动标定。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            _, video = self.prepare_clip(temporary)
+            config = config_from_dict({"video": str(video), "weights": "models/yolov8n.pt", "match_id": "test", "clip_id": "sample", "pitch_model": "eight"})
+            self.assertEqual((config.pitch_length_m, config.pitch_width_m, config.calibration_method), (68, 50, "manual"))
+            progress = []
+            run_dir = Path(temporary) / "run_test"
+            with patch("footballer_analyzer.analysis.track", return_value=run_dir), patch("footballer_analyzer.analysis.calibrate_run") as calibration:
+                self.assertEqual(analyze_clip(config, lambda *values: progress.append(values)), run_dir)
+                calibration.assert_not_called()
+            self.assertEqual(progress[-1], ("awaiting_calibration", 3, 3, run_dir))
+
+    def test_eight_job_defaults_and_automatic_mode_rejection(self):
+        """HTTP 分析入口按八人制默认尺寸创建任务，拒绝八人制自动匹配。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            clips, _ = self.prepare_clip(temporary)
+            app = ReviewApp(Path(temporary) / "outputs", clips)
+            finished = threading.Event()
+
+            def fake_analysis(config, progress):
+                """记录手动任务配置，返回同一个人物运行。"""
+                self.assertEqual((config.pitch_model, config.calibration_method, config.pitch_length_m, config.pitch_width_m), ("eight", "manual", 68, 50))
+                finished.set()
+                return Path(temporary) / "run_test"
+
+            with patch("footballer_analyzer.analysis.analyze_clip", side_effect=fake_analysis), patch("footballer_analyzer.dynamic_calibration.WhiteLineCalibrator") as automatic:
+                app.start_analysis({"clip_id": "sample.avi", "pitch_model": "eight"})
+                self.assertTrue(finished.wait(5))
+                for thread in threading.enumerate():
+                    if thread.name.endswith("(worker)"):
+                        thread.join(timeout=5)
+                automatic.assert_not_called()
+            self.assertEqual(app.analysis_job["stage"], "awaiting_calibration")
+            self.assertEqual(app.analysis_job["status"], "complete")
+            with self.assertRaisesRegex(ValueError, "仅支持手动"):
+                app.start_analysis({"clip_id": "sample.avi", "pitch_model": "eight", "calibration_method": "white_lines"})
+
     def test_background_job_reuses_duplicate_and_preserves_partial_result(self):
         """相同请求复用任务，不同参数被拒绝；场地失败仍保留可查看的人物运行。"""
         with tempfile.TemporaryDirectory() as temporary:

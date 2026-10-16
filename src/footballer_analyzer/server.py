@@ -76,13 +76,16 @@ class ReviewApp:
         source = self.clip_path(payload.get("clip_id"))
         values = load_config(ROOT / "configs/tracking_quality.yaml").snapshot()
         values.update(video=str(source), output_root=str(self.output_root), clip_id=source.stem, match_id=f"local_{source.stem}")
-        for key in ["pitch_length_m", "pitch_width_m", "start_frame", "end_frame", "imgsz"]:
+        preset = pitch_spec(payload.get("pitch_model", "eleven"))
+        values.update(pitch_model=preset["model"], pitch_length_m=preset["length_m"], pitch_width_m=preset["width_m"], calibration_method="manual" if preset["model"] == "eight" else "white_lines")
+        for key in ["pitch_length_m", "pitch_width_m", "start_frame", "end_frame", "imgsz", "calibration_method"]:
             if key in payload:
                 values[key] = payload[key]
         config = config_from_dict(values)
         if config.imgsz not in {1280, 1920}:
             raise ValueError("检测尺寸仅支持 1280 或 1920")
-        WhiteLineCalibrator(config.pitch_length_m, config.pitch_width_m)
+        if config.calibration_method == "white_lines":
+            WhiteLineCalibrator(config.pitch_length_m, config.pitch_width_m)
         if not config.weights.is_file():
             raise ValueError(f"缺少本地模型权重：{config.weights}")
         with self.lock:
@@ -107,7 +110,7 @@ class ReviewApp:
 
                 run_dir = analyze_clip(config, progress)
                 with self.lock:
-                    job.update(status="complete", stage="complete", run_id=run_dir.name)
+                    job.update(status="complete", stage="awaiting_calibration" if config.calibration_method == "manual" else "complete", run_id=run_dir.name)
             except Exception as error:
                 with self.lock:
                     job.update(status="failed", error=str(error))
@@ -203,6 +206,8 @@ class ReviewApp:
             raise ValueError("运行尚未完成")
         if self.calibration_jobs.get(run_id, {}).get("status") == "running":
             return dict(self.calibration_jobs[run_id])
+        if payload.get("pitch_model", "eleven") != "eleven":
+            raise ValueError("逐帧白线标定目前仅支持十一人制模型")
         length = float(payload.get("pitch_length_m", manifest["config"]["pitch_length_m"]))
         width = float(payload.get("pitch_width_m", manifest["config"]["pitch_width_m"]))
         WhiteLineCalibrator(length, width)

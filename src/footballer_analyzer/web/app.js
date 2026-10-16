@@ -3,8 +3,8 @@ const state = { runId: null, data: null, frame: 0, selected: null, image: null, 
 const colors = { home: "#28cfac", away: "#f9b26a", cluster_0: "#28cfac", cluster_1: "#f9b26a", unknown: "#a6b3b2" };
 const reasons = { unbound: "身份尚未确认", excluded: "人工排除", outside_roi: "超出可靠统计区域", outside_pitch: "投影超出球场", clipped_feet: "脚点被画面裁切", uncalibrated: "尚未标定", calibration_unreliable: "本帧白线几何不足，暂停场地投影", outside_calibration_window: "超出标定有效区间", invalid_projection: "投影无效", speed_jump: "异常速度跳变，已切段" };
 const analysis = { clips: [], timer: null, running: false, activeClip: null, handledId: null, runId: null };
-const analysisStages = { queued: "准备分析", inspecting: "核实视频可解码区间", sampling: "采样球衣颜色", tracking: "人物检测与持续追踪", calibrating: "逐帧白线与场地追踪", complete: "分析完成" };
-Object.assign(state, { draftPitch: null, preview: null, selectedLandmark: null, draftVersion: 0, geometryRequest: 0 });
+const analysisStages = { queued: "准备分析", inspecting: "核实视频可解码区间", sampling: "采样球衣颜色", tracking: "人物检测与持续追踪", calibrating: "逐帧白线与场地追踪", awaiting_calibration: "人物追踪完成，待手动标定", complete: "分析完成" };
+Object.assign(state, { draftPitch: null, preview: null, selectedLandmark: null, draftVersion: 0, geometryRequest: 0, pendingCalibrations: new Set() });
 let pitchModels = [];
 
 function activeCalibration() {
@@ -76,7 +76,7 @@ function project(row) {
   else if (binding?.action === "exclude") base.reason = "excluded";
   else if (!binding) base.reason = "unbound";
   const motion = state.motionRows.get(`${row.frame_index}:${row.track_id}`);
-  if (motion && !motion.valid && !state.data.latest_report?.stale) base.reason = motion.reason;
+  if (motion && !motion.valid && !state.draftDirty && !state.data.latest_report?.stale) base.reason = motion.reason;
   return base;
 }
 
@@ -379,7 +379,7 @@ function updateCalibrationUI() {
   element("auto-calibration").hidden = manual;
   element("next-calibration-failure").hidden = manual;
   element("save-calibration").textContent = manual ? "确认并保存标定" : "保存验收状态";
-  element("save-calibration").disabled = manual && !state.preview && state.draftDirty;
+  element("save-calibration").disabled = manual && (state.points.length < 4 || (!state.preview && state.draftDirty));
   if (!manual) { state.pointMode = false; state.roiMode = false; }
   updateEditing();
   renderReferencePitch();
@@ -417,7 +417,7 @@ async function chooseLandmark(identifier) {
   stopPlayback();
   state.selectedLandmark = identifier;
   state.pointMode = false; state.roiMode = false;
-  await showFrame(Number(element("calibration-reference").value));
+  if (state.frame !== Number(element("calibration-reference").value)) await showFrame(Number(element("calibration-reference").value));
   state.pointMode = true;
   updateEditing(); renderReferencePitch(); draw();
 }
@@ -427,6 +427,7 @@ async function refreshDraftPitch(reset = false) {
   markDraftDirty();
   state.draftPitch = null;
   if (reset) { state.points = []; state.roi = []; state.selectedLandmark = null; }
+  renderCalibrationPoints(); updateCalibrationUI(); draw();
   const requestId = ++state.geometryRequest;
   const model = element("pitch-model").value;
   const query = new URLSearchParams({model, length: element("pitch-length").value, width: element("pitch-width").value});
@@ -572,11 +573,12 @@ async function watchAnalysis() {
       if (!Array.from(element("clip-select").options).some((entry) => entry.value === job.clip_id)) renderClips();
       element("clip-select").value = job.clip_id;
       if (element("clip-preview").getAttribute("src") !== `/api/clips/${encodeURIComponent(job.clip_id)}/preview`) showClip();
-      for (const [id, key] of [["analysis-length", "pitch_length_m"], ["analysis-width", "pitch_width_m"], ["analysis-imgsz", "imgsz"], ["analysis-start", "start_frame"], ["analysis-end", "end_frame"]]) element(id).value = job.config[key] ?? "";
+      for (const [id, key] of [["analysis-model", "pitch_model"], ["analysis-method", "calibration_method"], ["analysis-length", "pitch_length_m"], ["analysis-width", "pitch_width_m"], ["analysis-imgsz", "imgsz"], ["analysis-start", "start_frame"], ["analysis-end", "end_frame"]]) element(id).value = job.config[key] ?? "";
     }
     element("start-analysis").disabled = analysis.running || !element("clip-select").value;
-    element("start-analysis").textContent = analysis.running ? "正在分析…" : "开始人物追踪与场地追踪";
-    for (const id of ["clip-select", "unprocessed-only", "analysis-length", "analysis-width", "analysis-imgsz", "analysis-start", "analysis-end"]) element(id).disabled = analysis.running;
+    element("start-analysis").textContent = analysis.running ? "正在分析…" : element("analysis-method").value === "manual" ? "开始人物追踪，随后手动标定" : "开始人物追踪与场地追踪";
+    for (const id of ["clip-select", "unprocessed-only", "analysis-model", "analysis-method", "analysis-length", "analysis-width", "analysis-imgsz", "analysis-start", "analysis-end"]) element(id).disabled = analysis.running;
+    element("analysis-method").querySelector('[value="white_lines"]').disabled = element("analysis-model").value === "eight";
     element("open-analysis").hidden = !job.run_id || analysis.running;
     element("analysis-progress").hidden = !analysis.running;
     element("analysis-progress").max = Math.max(1, job.total_frames || 0);
@@ -589,10 +591,11 @@ async function watchAnalysis() {
     } else if (job.status === "failed") {
       label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage}失败：${job.error}${job.run_id ? "。人物缓存已保留，可打开结果并重新运行场地标定。" : "。可调整参数后重新开始。"}`;
     } else if (job.status === "complete") {
-      label.textContent = `${job.clip_id} · 人物追踪与场地追踪已完成。点击球员框或球场圆点，核对相同编号的位置；未绑定身份也能查看投影。`;
+      label.textContent = job.stage === "awaiting_calibration" ? `${job.clip_id} · 人物追踪完成，待手动标定。选择清晰的一帧，在模型和原图中配对参考点后预览并保存。` : `${job.clip_id} · 人物追踪与场地追踪已完成。点击球员框或球场圆点核对位置。`;
       if (analysis.handledId !== job.job_id) {
         analysis.handledId = job.job_id;
         await initialize(job.run_id);
+        if (job.stage === "awaiting_calibration") document.querySelector('[data-tab="calibration"]').click();
       }
     }
   } catch (error) {
@@ -606,11 +609,12 @@ async function watchCalibration(runId) {
   const job = await request(`/api/runs/${encodeURIComponent(runId)}/calibration-job`);
   if (runId !== state.runId) return;
   const running = job.status === "running";
+  if (running) state.pendingCalibrations.add(runId);
   element("auto-calibration").disabled = running || element("pitch-model").value === "eight";
   element("auto-calibration").textContent = running ? "正在逐帧识别…" : "运行逐帧白线标定";
   element("calibration-progress").textContent = running ? `已处理 ${job.processed_frames} / ${job.total_frames} 帧；完成后自动载入。` : job.status === "failed" ? `标定失败：${job.error}。可切换手动固定标定。` : "八人制采用独立参考点；固定标定保存后用于整个有效区间。";
   if (running) state.calibrationTimer = setTimeout(() => watchCalibration(runId).catch((error) => notify(error.message, true)), 1000);
-  else if (job.status === "complete" && state.data.calibration?.calibration_id !== job.calibration_id) await loadRun(runId, true);
+  else if (state.pendingCalibrations.delete(runId) && job.status === "complete" && state.data.calibration?.calibration_id !== job.calibration_id) await loadRun(runId, true);
 }
 
 element("run-select").addEventListener("change", () => loadRun(element("run-select").value).catch((error) => notify(error.message, true)));
@@ -621,9 +625,24 @@ element("refresh-clips").addEventListener("click", () => refreshClips().catch((e
 element("clip-preview").addEventListener("load", () => { element("clip-preview").hidden = false; element("clip-preview-status").hidden = true; });
 element("clip-preview").addEventListener("error", () => { element("clip-preview").hidden = true; element("clip-preview-status").hidden = false; element("clip-preview-status").textContent = "首帧预览不可用，请检查视频是否可解码。"; });
 element("open-analysis").addEventListener("click", () => initialize(analysis.runId).catch((error) => notify(error.message, true)));
+function updateAnalysisOptions(reset = false) {
+  if (reset) {
+    const preset = pitchModels.find((definition) => definition.spec.model === element("analysis-model").value);
+    if (preset) { element("analysis-length").value = preset.spec.length_m; element("analysis-width").value = preset.spec.width_m; }
+    element("analysis-method").value = element("analysis-model").value === "eight" ? "manual" : "white_lines";
+  }
+  element("analysis-method").querySelector('[value="white_lines"]').disabled = element("analysis-model").value === "eight";
+  const manual = element("analysis-method").value === "manual";
+  if (!analysis.running) {
+    element("start-analysis").textContent = manual ? "开始人物追踪，随后手动标定" : "开始人物追踪与场地追踪";
+    element("analysis-status").textContent = manual ? "先完成人物追踪，再进入手动固定标定。可复用已有运行，直接到下方“场地标定”操作。" : "依次运行人物追踪和逐帧白线标定，完成后自动打开投影结果。";
+  }
+}
+element("analysis-model").addEventListener("change", () => updateAnalysisOptions(true));
+element("analysis-method").addEventListener("change", () => updateAnalysisOptions());
 element("start-analysis").addEventListener("click", async () => {
   const endText = element("analysis-end").value;
-  const payload = { clip_id: element("clip-select").value, pitch_length_m: Number(element("analysis-length").value), pitch_width_m: Number(element("analysis-width").value), imgsz: Number(element("analysis-imgsz").value), start_frame: Number(element("analysis-start").value), end_frame: endText === "" ? null : Number(endText) };
+  const payload = { clip_id: element("clip-select").value, pitch_model: element("analysis-model").value, calibration_method: element("analysis-method").value, pitch_length_m: Number(element("analysis-length").value), pitch_width_m: Number(element("analysis-width").value), imgsz: Number(element("analysis-imgsz").value), start_frame: Number(element("analysis-start").value), end_frame: endText === "" ? null : Number(endText) };
   if (!payload.clip_id) return;
   element("start-analysis").disabled = true;
   try {
@@ -644,7 +663,8 @@ element("auto-calibration").addEventListener("click", async () => {
   const runId = state.runId;
   element("auto-calibration").disabled = true;
   try {
-    await request(api("calibration-auto"), { pitch_length_m: Number(element("pitch-length").value), pitch_width_m: Number(element("pitch-width").value) });
+    await request(api("calibration-auto"), { pitch_model: element("pitch-model").value, pitch_length_m: Number(element("pitch-length").value), pitch_width_m: Number(element("pitch-width").value) });
+    state.pendingCalibrations.add(runId);
     await watchCalibration(runId);
     notify("正在逐源帧识别白线并匹配场地几何，完成后可播放验收。");
   } catch (error) { element("auto-calibration").disabled = false; notify(error.message, true); }
@@ -775,7 +795,7 @@ element("pitch-model").addEventListener("change", () => {
   state.pointMode = false; state.roiMode = false;
   refreshDraftPitch(true).catch((error) => notify(error.message, true));
 });
-element("calibration-method").addEventListener("change", () => { state.pointMode = false; state.roiMode = false; updateCalibrationUI(); });
+element("calibration-method").addEventListener("change", () => { state.pointMode = false; state.roiMode = false; markDraftDirty(); updateCalibrationUI(); draw(); });
 element("landmark-select").addEventListener("change", () => { if (element("landmark-select").value) chooseLandmark(element("landmark-select").value).catch((error) => notify(error.message, true)); });
 element("calibration-reference").addEventListener("change", async () => {
   state.pointMode = false; state.roiMode = false; state.points = []; state.roi = []; state.selectedLandmark = null;
@@ -824,6 +844,7 @@ element("save-calibration").addEventListener("click", async () => {
 });
 element("generate-report").addEventListener("click", async () => {
   if (!state.data) return;
+  if (state.draftDirty) return notify("请先保存当前标定草稿，再生成报告。", true);
   const button = element("generate-report"); button.disabled = true; button.classList.add("busy"); button.textContent = "正在计算与渲染…"; stopPlayback();
   try { await request(api("report"), {}); await loadRun(state.runId, true); notify("新版本报告已生成。点击统计表中的球员查看速度曲线与热图。"); } catch (error) { notify(error.message, true); }
   finally { button.disabled = false; button.classList.remove("busy"); button.textContent = "生成 / 重算报告"; }

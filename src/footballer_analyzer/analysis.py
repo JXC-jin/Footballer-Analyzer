@@ -1,4 +1,4 @@
-"""编排素材分析：核实视频末尾、逐帧人物追踪，再为同一运行计算场地投影。"""
+"""编排素材分析：核实视频末尾、人物追踪，再自动标定或等待手动固定标定。"""
 
 from dataclasses import replace
 
@@ -10,7 +10,7 @@ from .white_line_pipeline import calibrate_run
 
 
 def analyze_clip(config, progress):
-    """顺序生成人物与场地缓存；progress 接收阶段、数量及已完成人物运行路径。
+    """生成人物缓存，按配置自动标定或等待手动标定；progress 接收阶段、数量及运行路径。
 
     未指定结束帧时扫描至可解码末尾，避免素材容器虚报帧数；指定区间仍严格校验。
     """
@@ -38,6 +38,9 @@ def analyze_clip(config, progress):
 
     run_dir = track(config, tracking_progress)
     total = config.end_frame - config.start_frame
+    if config.calibration_method == "manual":
+        progress("awaiting_calibration", total, total, run_dir)
+        return run_dir
     progress("calibrating", 0, total, run_dir)
 
     def calibration_progress(processed, expected):
