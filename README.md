@@ -6,6 +6,7 @@
 
 ## 现在可以做什么
 
+- 浏览器选择 `data/clips` 中尚无人物追踪的素材，一键执行人物与场地追踪，查看阶段进度并自动打开投影结果。
 - YOLOv8n 人物检测、ByteTrack 跟踪、球衣颜色分组，缓存原始像素轨迹。
 - 浏览器同帧展示原图检测框、脚点与球场投影；支持播放、逐帧、源帧跳转和联动选择。
 - 填写场地尺寸，逐帧识别白线并自动匹配中圈、边线和禁区，随镜头更新投影；前端回看白线证据与模型叠加。
@@ -27,16 +28,7 @@ python -m venv .venv
 已安装本项目时，可直接从这里开始：
 
 ```powershell
-# 视频与模型为本地文件，首次在新机器上使用时需要自行准备
-# 默认：data/clips/goodview_static_5s.mp4 和 models/yolov8n.pt
-& .\.venv\Scripts\python.exe -m footballer_analyzer track --config configs/demo.yaml
-
-# 跟踪成功后，选择刚生成的运行目录
-$runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name -Descending | Select-Object -First 1).FullName
-
-# 填写实际场地尺寸；不需要手工确认方向或点选参考点
-& .\.venv\Scripts\python.exe -m footballer_analyzer calibrate-lines --run $runDir --pitch-length 105 --pitch-width 68
-
+# 视频放在 data/clips，模型放在 models/yolov8n.pt
 & .\.venv\Scripts\python.exe -m footballer_analyzer serve --port 8765
 ```
 
@@ -44,6 +36,7 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 
 ### 前端操作顺序
 
+0. 在页面上方“选择素材并分析”选择视频，确认实际场地长宽，点击“开始人物追踪与场地追踪”。默认采用 1920 检测输入、逐源帧处理整段素材；可改为 1280，或展开限定源帧区间。后台依次核实可解码末尾、采样球衣、人物追踪和逐帧场地标定，完成后自动打开新运行。页面刷新可恢复当前任务进度；服务重启会终止未完成任务，需重新开始。
 1. 左侧选择运行；点击列表、图像中的球员框或球场圆点，联动核对相同轨迹 ID。
 2. 用上一帧、下一帧、滑条或输入源帧号后点击“跳转”定位。预览最高 10 FPS；源帧号与原始时间保持一致。
 3. 在“场地标定”填写实际尺寸，点击“运行逐帧白线标定”，等待进度完成。方向自动约定，无需点选或确认方向；仅支持当前标准十一人制模板。
@@ -53,6 +46,16 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 7. “导出对拍图”生成当前帧的画面与球场并排 PNG，再点“保存 PNG”。
 
 排查漏检时勾选“未关联检测”：红色虚线表示有检测但尚未形成轨迹，并显示本帧检测与关联数量。原始检测包括场外人员，不等于在场球员数；旧运行缺少检测缓存时需重新跑 `track`。
+
+人物尚未绑定真实身份时也显示空心投影点，可直接检查位置；场地匹配失败帧不显示投影。素材筛选中的“尚无人物追踪”表示没有已完成的人物运行，白线独立验收和失败运行不计入；已有短区间运行不代表整段视频已处理，可取消筛选重新分析。每次分析新建运行，保留历史结果。场地计算异常时可打开已完成的人物结果，再到“场地标定”重试。当前每次只允许一个素材分析任务。
+
+终端仍可单独处理，随后在页面刷新选择运行：
+
+```powershell
+& .\.venv\Scripts\python.exe -m footballer_analyzer track --config configs/tracking_quality.yaml
+$runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name -Descending | Select-Object -First 1).FullName
+& .\.venv\Scripts\python.exe -m footballer_analyzer calibrate-lines --run $runDir --pitch-length 105 --pitch-width 68
+```
 
 `track_id` 只在一次运行内有效，`player_id` 才是跨场身份；`home/away` 为人工确认的本场队伍，颜色簇不自动代表真实主客队。帧区间均为左闭右开 `[start_frame, end_frame)`。
 
@@ -116,7 +119,7 @@ data/players.yaml                跨场球员档案（首次从前端创建）
 node --check src/footballer_analyzer/web/app.js
 ```
 
-当前 **30 项测试通过**，包含运动与变焦标定、强光白线、失败恢复、动态报告切段和版本隔离。真实 5 秒素材：1080p25、125 帧；1280 修复版 3545 条观测、约 16.9 秒，1920 精度版 4106 条观测、约 27.0 秒（含预采样与产物输出，不含 Python 启动导入）。五帧人工抽样共 105 人次，追踪观测由旧配置 44 次提升到精度版 103 次，仍有 3 次抽样编号变化。初版记录见 [08 实现与验收记录](docs/08-实现与验收记录.md)，追踪证据见 [09 追踪丢失诊断与修复](docs/09-追踪丢失诊断与修复.md)。
+当前 **34 项测试通过**，包含素材路径与任务重入、真实视频末尾、运动与变焦标定、强光白线、失败恢复、动态报告切段和版本隔离。真实 5 秒素材：1080p25、125 帧；1280 修复版 3545 条观测、约 16.9 秒，1920 精度版 4106 条观测、约 27.0 秒（含预采样与产物输出，不含 Python 启动导入）。五帧人工抽样共 105 人次，追踪观测由旧配置 44 次提升到精度版 103 次，仍有 3 次抽样编号变化。初版记录见 [08 实现与验收记录](docs/08-实现与验收记录.md)，追踪证据见 [09 追踪丢失诊断与修复](docs/09-追踪丢失诊断与修复.md)。
 
 当前使用 CPU 检测；调研中的 DirectML 尚未接入本原型。短片可用于检查链路，未证明长片跟踪准确率或 ±10% 距离误差。现有模型仍有漏检、断轨和换 ID；报告仅统计可靠区域内的连续有效观测，缺口不插值。逐帧标定面向白线清晰的连续战术镜头；小场、严重遮挡、近景和切镜的全面支持尚未验证。视频仍要求恒定帧率，不包含球、事件、自动 ReID、多摄融合或实时服务。
 

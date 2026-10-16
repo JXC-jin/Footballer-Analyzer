@@ -1,10 +1,12 @@
 """启动临时回环 HTTP 服务，验证源帧读取以及路径、Host 和写入来源边界。"""
 
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -18,6 +20,37 @@ import test_reporting
 
 class ServerTests(unittest.TestCase):
     """本地复盘 API 的读操作与输入边界测试。"""
+
+    def test_clip_preview_and_analysis_http_routes(self):
+        """验证素材预览、后台状态与启动参数路由，拒绝素材越界和跨源启动。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir, manifest = test_reporting.ReportingTests().prepare_run(temporary)
+            video = Path(manifest["config"]["video"])
+            app = ReviewApp(temporary, video.parent)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(app))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_port}"
+            try:
+                with urlopen(base + "/api/clips") as response:
+                    self.assertEqual(json.load(response)[0]["clip_id"], video.name)
+                with urlopen(base + f"/api/clips/{video.name}/preview") as response:
+                    self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+                with urlopen(base + "/api/analysis-job") as response:
+                    self.assertEqual(json.load(response)["status"], "idle")
+                headers = {"Content-Type": "application/json"}
+                body = json.dumps({"clip_id": video.name, "start_frame": 2}).encode()
+                with patch.object(app, "start_analysis", return_value={"status": "running"}) as start:
+                    with urlopen(Request(base + "/api/analysis", data=body, headers=headers)) as response:
+                        self.assertEqual(json.load(response)["status"], "running")
+                    start.assert_called_once_with({"clip_id": video.name, "start_frame": 2})
+                for request in [Request(base + "/api/clips/..%5Csource.avi/preview"), Request(base + "/api/analysis", data=body, headers={**headers, "Origin": "https://example.com"})]:
+                    with self.assertRaises(HTTPError):
+                        urlopen(request)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
 
     def test_detection_cache_is_optional_and_refreshes(self):
         """旧运行返回未知检测缓存，缓存补齐后返回原始框且保留置信度。"""

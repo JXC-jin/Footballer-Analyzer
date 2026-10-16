@@ -88,6 +88,9 @@ class AnalysisTests(unittest.TestCase):
                 self.assertEqual(job["job_id"], duplicate["job_id"])
                 with self.assertRaisesRegex(ValueError, "正在分析"):
                     app.start_analysis({"clip_id": "sample.avi", "imgsz": 1280})
+                write_json(app.output_root / "run_test/manifest.json", {"status": "complete"})
+                with self.assertRaisesRegex(ValueError, "联合分析"):
+                    app.start_calibration("run_test", {})
                 release.set()
                 for thread in threading.enumerate():
                     if thread.name.endswith("(worker)"):

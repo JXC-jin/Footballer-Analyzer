@@ -1,4 +1,4 @@
-"""提供仅监听回环地址的复盘服务：源帧、轨迹、标定、身份编辑与报告生成。"""
+"""提供回环复盘服务：素材分析任务、源帧、轨迹、标定、身份编辑与报告生成。"""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,7 +24,7 @@ class ReviewApp:
     """管理输出根目录、轨迹缓存和编辑锁，供本地 HTTP 处理器共享。"""
 
     def __init__(self, output_root, clips_root=ROOT / "data/clips"):
-        """解析输出根目录，初始化可重入锁与轨迹缓存。"""
+        """解析素材与输出根目录，初始化共享锁、轨迹缓存和后台任务状态。"""
         self.output_root = Path(output_root).resolve()
         self.lock = threading.RLock()
         self.track_cache = {}
@@ -188,6 +188,8 @@ class ReviewApp:
         from .white_line_pipeline import calibrate_run
 
         run_dir = self.run_dir(run_id)
+        if self.analysis_job.get("status") == "running" and self.analysis_job.get("run_id") == run_id:
+            raise ValueError("该素材的联合分析正在计算场地，请等待完成")
         manifest = read_json(run_dir / "manifest.json")
         if manifest["status"] != "complete":
             raise ValueError("运行尚未完成")
@@ -357,7 +359,8 @@ def handler_for(app):
                     return self.send_json({"error": "接口不存在"}, 404)
                 run_id, action = match.groups()
                 with app.lock:
-                    if action in {"calibration", "calibration-review"} and app.calibration_jobs.get(run_id, {}).get("status") == "running":
+                    analyzing = app.analysis_job.get("status") == "running" and app.analysis_job.get("run_id") == run_id
+                    if action in {"calibration", "calibration-review"} and (analyzing or app.calibration_jobs.get(run_id, {}).get("status") == "running"):
                         raise ValueError("逐帧标定仍在计算，请完成后再修改或验收")
                     if action == "calibration":
                         result = save_calibration(app.run_dir(run_id), payload)

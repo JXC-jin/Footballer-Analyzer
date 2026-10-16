@@ -2,6 +2,8 @@ const element = (id) => document.getElementById(id);
 const state = { runId: null, data: null, frame: 0, selected: null, image: null, whiteImage: null, playing: false, pointMode: false, roiMode: false, roi: [], points: [], requestId: 0, runRequestId: 0, frameRows: new Map(), detectionRows: new Map(), motionRows: new Map(), draftDirty: false, calibrationTimer: null };
 const colors = { home: "#28cfac", away: "#f9b26a", cluster_0: "#28cfac", cluster_1: "#f9b26a", unknown: "#a6b3b2" };
 const reasons = { unbound: "身份尚未确认", excluded: "人工排除", outside_roi: "超出可靠统计区域", outside_pitch: "投影超出球场", clipped_feet: "脚点被画面裁切", uncalibrated: "尚未标定", calibration_unreliable: "本帧白线几何不足，暂停场地投影", outside_calibration_window: "超出标定有效区间", invalid_projection: "投影无效", speed_jump: "异常速度跳变，已切段" };
+const analysis = { clips: [], timer: null, running: false, activeClip: null, handledId: null, runId: null };
+const analysisStages = { queued: "准备分析", inspecting: "核实视频可解码区间", sampling: "采样球衣颜色", tracking: "人物检测与持续追踪", calibrating: "逐帧白线与场地追踪", complete: "分析完成" };
 
 function notify(message, error = false) {
   element("notice").textContent = message;
@@ -406,14 +408,89 @@ async function loadRun(runId, preserve = false) {
   watchCalibration(state.runId).catch((error) => notify(error.message, true));
 }
 
-async function initialize() {
-  const runs = await request("/api/runs");
+function showClip() {
+  const clip = analysis.clips.find((entry) => entry.clip_id === element("clip-select").value);
+  const preview = element("clip-preview");
+  preview.hidden = true;
+  element("clip-preview-status").hidden = false;
+  element("clip-preview-status").textContent = clip ? "正在加载首帧…" : "没有符合条件的素材";
+  element("clip-detail").textContent = clip ? `${(clip.size_bytes / 1024 / 1024).toFixed(1)} MB · ${clip.tracking_runs ? `${clip.tracking_runs} 次人物运行，${clip.calibrated_runs} 次附带场地标定；可新建运行重新分析。` : "尚无已完成人物运行；仅白线验收不计入人物追踪。"}` : "可取消筛选查看已有素材，或将新视频放入 data/clips 后刷新。";
+  element("start-analysis").disabled = analysis.running || !clip;
+  if (clip) preview.src = `/api/clips/${encodeURIComponent(clip.clip_id)}/preview`;
+  else preview.removeAttribute("src");
+}
+
+function renderClips() {
+  const previous = element("clip-select").value;
+  const clips = analysis.clips.filter((clip) => !element("unprocessed-only").checked || !clip.tracking_runs || clip.clip_id === analysis.activeClip);
+  element("clip-select").replaceChildren(...clips.map((clip) => option(clip.clip_id, `${clip.clip_id} · ${clip.tracking_runs ? "有人物运行" : "未追踪人物"}`)));
+  if (!clips.length) element("clip-select").append(option("", "没有符合条件的素材"));
+  else if (clips.some((clip) => clip.clip_id === previous)) element("clip-select").value = previous;
+  showClip();
+}
+
+async function refreshClips() {
+  analysis.clips = await request("/api/clips");
+  renderClips();
+}
+
+async function initialize(preferredId = null) {
+  const [runs, clips] = await Promise.all([request("/api/runs"), request("/api/clips")]);
+  analysis.clips = clips;
+  renderClips();
   const completed = runs.filter((run) => run.status === "complete");
   element("run-select").replaceChildren(...completed.map((run) => option(run.run_id, `${run.clip_id} · ${run.run_id.slice(-8)}`)));
-  if (!completed.length) { element("run-select").append(option("", "尚无已完成运行")); notify("先在终端执行：footballer-analyzer track --config configs/demo.yaml，完成后刷新。"); return; }
-  const selectedId = completed.some((run) => run.run_id === state.runId) ? state.runId : completed[0].run_id;
-  element("run-select").value = selectedId;
-  await loadRun(selectedId);
+  element("run-select").disabled = !completed.length;
+  if (!completed.length) {
+    element("run-select").append(option("", "尚无已完成运行"));
+    notify("在上方选择视频，点击“开始人物追踪与场地追踪”，完成后自动显示结果。");
+  } else {
+    const candidate = preferredId || state.runId;
+    const selectedId = completed.some((run) => run.run_id === candidate) ? candidate : completed[0].run_id;
+    element("run-select").value = selectedId;
+    await loadRun(selectedId);
+  }
+  await watchAnalysis();
+}
+
+async function watchAnalysis() {
+  clearTimeout(analysis.timer);
+  try {
+    const job = await request("/api/analysis-job");
+    analysis.running = job.status === "running";
+    analysis.runId = job.run_id;
+    analysis.activeClip = analysis.running ? job.clip_id : null;
+    if (analysis.running) {
+      if (!Array.from(element("clip-select").options).some((entry) => entry.value === job.clip_id)) renderClips();
+      element("clip-select").value = job.clip_id;
+      if (element("clip-preview").getAttribute("src") !== `/api/clips/${encodeURIComponent(job.clip_id)}/preview`) showClip();
+      for (const [id, key] of [["analysis-length", "pitch_length_m"], ["analysis-width", "pitch_width_m"], ["analysis-imgsz", "imgsz"], ["analysis-start", "start_frame"], ["analysis-end", "end_frame"]]) element(id).value = job.config[key] ?? "";
+    }
+    element("start-analysis").disabled = analysis.running || !element("clip-select").value;
+    element("start-analysis").textContent = analysis.running ? "正在分析…" : "开始人物追踪与场地追踪";
+    for (const id of ["clip-select", "unprocessed-only", "analysis-length", "analysis-width", "analysis-imgsz", "analysis-start", "analysis-end"]) element(id).disabled = analysis.running;
+    element("open-analysis").hidden = !job.run_id || analysis.running;
+    element("analysis-progress").hidden = !analysis.running;
+    element("analysis-progress").max = Math.max(1, job.total_frames || 0);
+    element("analysis-progress").value = job.processed_frames || 0;
+    const label = element("analysis-status");
+    label.classList.toggle("error", job.status === "failed");
+    if (analysis.running) {
+      label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage} · ${job.processed_frames} / ${job.total_frames || "待确定"} 帧。CPU 分析需要一些时间，可继续查看已有运行；刷新页面后会恢复进度。`;
+      analysis.timer = setTimeout(watchAnalysis, 1000);
+    } else if (job.status === "failed") {
+      label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage}失败：${job.error}${job.run_id ? "。人物缓存已保留，可打开结果并重新运行场地标定。" : "。可调整参数后重新开始。"}`;
+    } else if (job.status === "complete") {
+      label.textContent = `${job.clip_id} · 人物追踪与场地追踪已完成。点击球员框或球场圆点，核对相同编号的位置；未绑定身份也能查看投影。`;
+      if (analysis.handledId !== job.job_id) {
+        analysis.handledId = job.job_id;
+        await initialize(job.run_id);
+      }
+    }
+  } catch (error) {
+    element("analysis-status").textContent = `读取分析进度失败：${error.message}，正在重试。`;
+    analysis.timer = setTimeout(watchAnalysis, 2000);
+  }
 }
 
 async function watchCalibration(runId) {
@@ -430,6 +507,25 @@ async function watchCalibration(runId) {
 
 element("run-select").addEventListener("change", () => loadRun(element("run-select").value).catch((error) => notify(error.message, true)));
 element("reload").addEventListener("click", () => initialize().catch((error) => notify(error.message, true)));
+element("clip-select").addEventListener("change", showClip);
+element("unprocessed-only").addEventListener("change", renderClips);
+element("refresh-clips").addEventListener("click", () => refreshClips().catch((error) => notify(error.message, true)));
+element("clip-preview").addEventListener("load", () => { element("clip-preview").hidden = false; element("clip-preview-status").hidden = true; });
+element("clip-preview").addEventListener("error", () => { element("clip-preview").hidden = true; element("clip-preview-status").hidden = false; element("clip-preview-status").textContent = "首帧预览不可用，请检查视频是否可解码。"; });
+element("open-analysis").addEventListener("click", () => initialize(analysis.runId).catch((error) => notify(error.message, true)));
+element("start-analysis").addEventListener("click", async () => {
+  const endText = element("analysis-end").value;
+  const payload = { clip_id: element("clip-select").value, pitch_length_m: Number(element("analysis-length").value), pitch_width_m: Number(element("analysis-width").value), imgsz: Number(element("analysis-imgsz").value), start_frame: Number(element("analysis-start").value), end_frame: endText === "" ? null : Number(endText) };
+  if (!payload.clip_id) return;
+  element("start-analysis").disabled = true;
+  try {
+    await request("/api/analysis", payload);
+    await watchAnalysis();
+  } catch (error) {
+    notify(error.message, true);
+    await watchAnalysis();
+  }
+});
 element("show-boxes").addEventListener("change", draw);
 element("show-unmatched").addEventListener("change", draw);
 element("show-white-lines").addEventListener("change", draw);

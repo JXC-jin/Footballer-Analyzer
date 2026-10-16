@@ -24,6 +24,26 @@
     <header class="page-header"><div><div class="eyebrow">TRACKING WORKSPACE <span>/</span> 01</div><h1>球员追踪与位置校验</h1><p id="source-description">用同一帧核对原始画面、追踪身份与球场投影。</p></div><div class="header-tags"><span class="tag">CPU · 离线</span><span class="tag live"><span class="online-dot"></span> 本地工作区</span></div></header>
     <div id="notice" class="notice" role="status">正在读取运行数据…</div>
 
+    <section class="panel source-panel" aria-labelledby="source-title">
+      <div class="panel-heading"><h2 id="source-title">选择素材并分析</h2><label class="check-inline"><input id="unprocessed-only" type="checkbox" checked> 仅显示尚无人物追踪的素材</label></div>
+      <div class="source-grid">
+        <div class="source-preview"><img id="clip-preview" alt="所选素材的首帧预览" hidden><p id="clip-preview-status">选择 data/clips 中的视频</p></div>
+        <div class="source-controls">
+          <label>本地视频素材<select id="clip-select" aria-label="选择视频素材"><option value="">正在读取素材…</option></select></label>
+          <p id="clip-detail" class="hint">素材来自 data/clips，可刷新列表发现新视频。</p>
+          <div class="form-row">
+            <label>场地长 · m<input id="analysis-length" type="number" min="90" max="120" step="0.1" value="105"></label>
+            <label>场地宽 · m<input id="analysis-width" type="number" min="60" max="90" step="0.1" value="68"></label>
+            <label>人物检测精度<select id="analysis-imgsz"><option value="1920">1920 · 精度优先</option><option value="1280">1280 · 速度优先</option></select></label>
+          </div>
+          <details class="analysis-window"><summary>限定分析区间（可选）</summary><div class="form-row"><label>开始源帧（含）<input id="analysis-start" type="number" min="0" step="1" value="0"></label><label>结束源帧（不含，留空至末尾）<input id="analysis-end" type="number" min="1" step="1" placeholder="视频末尾"></label></div></details>
+          <div class="button-row"><button id="start-analysis" class="primary" disabled>开始人物追踪与场地追踪</button><button id="refresh-clips" class="quiet">刷新素材</button><button id="open-analysis" hidden>打开分析结果</button></div>
+          <progress id="analysis-progress" max="1" value="0" hidden aria-label="当前分析阶段进度"></progress>
+          <p id="analysis-status" class="hint" role="status">依次运行人物追踪和逐帧白线标定，完成后自动打开画面与球场投影。</p>
+        </div>
+      </div>
+    </section>
+
     <section class="stat-grid" aria-label="运行概况">
       <article class="stat"><span>本帧观测</span><strong id="stat-observations">—</strong><small>仅显示真实检测匹配</small></article>
       <article class="stat"><span>当前已绑定</span><strong id="stat-bound">—</strong><small>轨迹 ID 与持久球员身份分离</small></article>
@@ -44,7 +64,7 @@
       <article class="panel pitch-panel">
         <div class="panel-heading"><div><span class="panel-icon">⌖</span><h2>球场位置</h2></div><span id="pitch-mode" class="mini-tag">等待标定</span></div>
         <div class="pitch-surface"><svg id="pitch" viewBox="-5 -5 115 78" role="img" aria-label="同帧球员在球场上的投影位置"></svg></div>
-        <div class="pitch-legend"><span><i class="legend-ring"></i> 空心点：区域外或身份未确认</span><span>数字与原图轨迹 ID 对应</span></div>
+        <div class="pitch-legend"><span><i class="legend-ring"></i> 空心点：区域外或身份未确认</span><span>数字与原图轨迹 ID 对应；无需绑定身份即可核对投影。</span></div>
         <div class="selection-card"><span class="eyebrow">SELECTED PLAYER</span><h3 id="selected-name">选择一名球员</h3><div class="selection-values"><div><small>轨迹 ID</small><strong id="selected-id">—</strong></div><div><small>球场坐标 · m</small><strong id="selected-position">—</strong></div></div><p id="selected-reason">从画面、场地圆点或左侧列表选择。</p></div>
       </article>
     </section>
