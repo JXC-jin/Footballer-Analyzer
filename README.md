@@ -29,10 +29,10 @@ python -m venv .venv
 
 ```powershell
 # 视频放在 data/clips，模型放在 models/yolov8n.pt
-& .\.venv\Scripts\python.exe -m footballer_analyzer serve --port 8765
+& .\.venv\Scripts\python.exe -m footballer_analyzer serve --port 8766
 ```
 
-打开 **[http://127.0.0.1:8765/](http://127.0.0.1:8765/)**。服务按 `Ctrl+C` 停止；换用其他输出目录时加 `serve --output-root <目录>`。视频、模型、球员档案与分析产物保存在本机，未纳入 Git。
+打开 **[http://127.0.0.1:8766/](http://127.0.0.1:8766/)**。默认使用 8766，避开 AnkiConnect 常用的 8765；端口冲突时可通过 `--port` 更换。服务按 `Ctrl+C` 停止；换用其他输出目录时加 `serve --output-root <目录>`。视频、模型、球员档案与分析产物保存在本机，未纳入 Git。
 
 ### 前端操作顺序
 

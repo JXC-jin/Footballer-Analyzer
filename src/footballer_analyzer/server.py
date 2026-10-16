@@ -383,7 +383,7 @@ def handler_for(app):
     return ReviewHandler
 
 
-def serve(output_root=ROOT / "outputs", port=8765):
+def serve(output_root=ROOT / "outputs", port=8766):
     """在 127.0.0.1 的指定端口阻塞运行复盘服务，收到 Ctrl+C 后关闭。"""
     if not 1 <= port <= 65535:
         raise ValueError("端口无效")

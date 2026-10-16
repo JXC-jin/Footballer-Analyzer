@@ -33,7 +33,7 @@ def main(argv=None):
     history_command.add_argument("--reports", nargs="+", required=True, type=Path)
     serve_command = commands.add_parser("serve", help="启动本地球员追踪与球场位置调试台")
     serve_command.add_argument("--output-root", type=Path, default=ROOT / "outputs")
-    serve_command.add_argument("--port", type=int, default=8765)
+    serve_command.add_argument("--port", type=int, default=8766)
     args = parser.parse_args(argv)
     try:
         if args.command == "track":
