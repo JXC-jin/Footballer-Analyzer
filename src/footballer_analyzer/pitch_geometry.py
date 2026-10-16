@@ -5,9 +5,13 @@ from itertools import combinations
 import cv2
 import numpy as np
 
+from .pitch_models import pitch_spec
 
-def pitch_polylines(length=105.0, width=68.0, spacing=0.7):
-    """返回具名场地折线，坐标单位米；禁区、球门区与圆半径采用标准尺寸。"""
+
+def pitch_polylines(length=None, width=None, spacing=0.7, model="eleven", spec=None):
+    """按模型或参数快照返回米制折线；旧调用默认使用十一人制。"""
+    spec = spec or {**pitch_spec(model), **({"length_m": length} if length is not None else {}), **({"width_m": width} if width is not None else {})}
+    length, width = spec["length_m"], spec["width_m"]
     curves = []
 
     def line(name, start, end):
@@ -25,18 +29,19 @@ def pitch_polylines(length=105.0, width=68.0, spacing=0.7):
     line("goal_left", (0, 0), (0, width))
     line("goal_right", (length, 0), (length, width))
     line("halfway", (length / 2, 0), (length / 2, width))
-    arc("center_circle", (length / 2, width / 2), 9.15, 0, 2 * np.pi)
+    radius = spec["circle_radius_m"]
+    arc("center_circle", (length / 2, width / 2), radius, 0, 2 * np.pi)
     for side, origin, sign in [("left", 0, 1), ("right", length, -1)]:
-        for label, depth, half_width in [("penalty", 16.5, 20.16), ("goal_area", 5.5, 9.16)]:
+        for label, depth, half_width in [("penalty", spec["penalty_depth_m"], spec["penalty_width_m"] / 2), ("goal_area", spec["goal_area_depth_m"], spec["goal_area_width_m"] / 2)]:
             front = origin + sign * depth
             low, high = width / 2 - half_width, width / 2 + half_width
             line(f"{side}_{label}_far", (origin, low), (front, low))
             line(f"{side}_{label}_front", (front, low), (front, high))
             line(f"{side}_{label}_near", (origin, high), (front, high))
-        angle = np.arccos(5.5 / 9.15)
+        angle = np.arccos((spec["penalty_depth_m"] - spec["penalty_mark_m"]) / radius)
         start = -angle if sign == 1 else np.pi - angle
         end = angle if sign == 1 else np.pi + angle
-        arc(f"{side}_penalty_arc", (origin + sign * 11, width / 2), 9.15, start, end)
+        arc(f"{side}_penalty_arc", (origin + sign * spec["penalty_mark_m"], width / 2), radius, start, end)
     return curves
 
 
