@@ -10,14 +10,20 @@ import threading
 
 import cv2
 
-from .calibration import calibration_directory, load_calibration, save_calibration
+from .calibration import build_calibration, calibration_directory, load_calibration, save_calibration
 from .config import ROOT, config_from_dict, load_config
 from .identity import load_players, validate_bindings
 from .pitch_geometry import pitch_polylines
+from .pitch_models import PRESETS, pitch_landmarks, pitch_spec
 from .storage import new_id, read_json, read_rows, read_yaml, write_yaml
 from .video import read_frame
 
 WEB = Path(__file__).parent / "web"
+
+
+def pitch_definition(spec):
+    """将参数快照转换为前端共用的标线和具名参考点。"""
+    return {"spec": spec, "landmarks": pitch_landmarks(spec), "lines": [{"name": name, "points": points.tolist()} for name, points in pitch_polylines(spec=spec)]}
 
 
 class ReviewApp:
@@ -157,8 +163,10 @@ class ReviewApp:
             }
         length = calibration["pitch_length_m"] if calibration else manifest["config"]["pitch_length_m"]
         width = calibration["pitch_width_m"] if calibration else manifest["config"]["pitch_width_m"]
-        pitch_lines = [{"name": name, "points": points.tolist()} for name, points in pitch_polylines(length, width)]
-        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "pitch_lines": pitch_lines, "reports": reports, "latest_report": latest}
+        model = calibration.get("pitch_model", "eleven") if calibration else manifest["config"].get("pitch_model", "eleven")
+        spec = calibration.get("pitch_spec") if calibration else None
+        definition = pitch_definition(spec or {**pitch_spec(model), "length_m": length, "width_m": width})
+        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "pitch_lines": definition["lines"], "pitch_definition": definition, "reports": reports, "latest_report": latest}
 
     def save_bindings(self, run_id, payload):
         """校验整份身份区间后原子保存，返回保存状态；冲突或越界时抛错。"""
@@ -274,6 +282,10 @@ def handler_for(app):
                     return self.send_json(app.runs())
                 if path == "/api/clips":
                     return self.send_json(app.clips())
+                if path == "/api/pitch-models":
+                    query = parse_qs(urlsplit(self.path).query)
+                    models = query.get("model", list(PRESETS))
+                    return self.send_json({"models": [pitch_definition(pitch_spec(model, query.get("length", [None])[0], query.get("width", [None])[0])) for model in models]})
                 if path == "/api/analysis-job":
                     with app.lock:
                         return self.send_json(dict(app.analysis_job))
@@ -354,7 +366,7 @@ def handler_for(app):
                     raise ValueError("请求必须为 JSON 对象")
                 if urlsplit(self.path).path == "/api/analysis":
                     return self.send_json(app.start_analysis(payload))
-                match = re.fullmatch(r"/api/runs/([^/]+)/(calibration|calibration-auto|calibration-review|bindings|players|report)", urlsplit(self.path).path)
+                match = re.fullmatch(r"/api/runs/([^/]+)/(calibration|calibration-preview|calibration-auto|calibration-review|bindings|players|report)", urlsplit(self.path).path)
                 if not match:
                     return self.send_json({"error": "接口不存在"}, 404)
                 run_id, action = match.groups()
@@ -364,6 +376,8 @@ def handler_for(app):
                         raise ValueError("逐帧标定仍在计算，请完成后再修改或验收")
                     if action == "calibration":
                         result = save_calibration(app.run_dir(run_id), payload)
+                    elif action == "calibration-preview":
+                        result = build_calibration(read_json(app.run_dir(run_id) / "manifest.json"), {**payload, "reviewed": False})
                     elif action == "calibration-auto":
                         result = app.start_calibration(run_id, payload)
                     elif action == "calibration-review":

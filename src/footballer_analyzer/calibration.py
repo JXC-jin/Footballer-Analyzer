@@ -1,6 +1,7 @@
 """管理静态及逐帧米制场地映射；校验版本、可靠区域、适用窗口与验收状态。"""
 
 from pathlib import Path
+from itertools import combinations
 import math
 import re
 
@@ -8,15 +9,32 @@ import cv2
 import numpy as np
 
 from .storage import read_json, read_yaml, write_yaml
+from .pitch_models import pitch_landmarks, pitch_spec
 
 
 def build_calibration(manifest, payload):
     """根据运行清单和人工对应点构造标定字典，非法几何或区间抛出 ValueError。
 
-    图像点使用源像素，场地点与尺寸使用米；至少四对非共线点，默认可靠区域为凸包。
+    具名参考点由模型解析为米制坐标；新标定默认覆盖画面内球场，旧坐标请求保留凸包。
     """
-    image_points = np.asarray(payload.get("image_points", []), dtype=float)
-    pitch_points = np.asarray(payload.get("pitch_points", []), dtype=float)
+    config = manifest.get("config", {})
+    model = payload.get("pitch_model", config.get("pitch_model", "eleven"))
+    defaults = pitch_spec(model)
+    same_model = model == config.get("pitch_model", "eleven")
+    length = float(payload.get("pitch_length_m", config.get("pitch_length_m", defaults["length_m"]) if same_model else defaults["length_m"]))
+    width = float(payload.get("pitch_width_m", config.get("pitch_width_m", defaults["width_m"]) if same_model else defaults["width_m"]))
+    pairs = payload.get("point_pairs")
+    if pairs is not None:
+        spec = pitch_spec(model, length, width)
+        landmarks = {point["id"]: point["pitch"] for point in pitch_landmarks(spec)}
+        if not isinstance(pairs, list) or any(not isinstance(pair, dict) or pair.get("landmark_id") not in landmarks for pair in pairs):
+            raise ValueError("参考点标识无效，请重新选择模型参考点")
+        image_points = np.asarray([pair.get("image", []) for pair in pairs], dtype=float)
+        pitch_points = np.asarray([landmarks[pair["landmark_id"]] for pair in pairs], dtype=float)
+    else:
+        spec = {**defaults, "length_m": length, "width_m": width}
+        image_points = np.asarray(payload.get("image_points", []), dtype=float)
+        pitch_points = np.asarray(payload.get("pitch_points", []), dtype=float)
     if image_points.ndim != 2 or image_points.shape[1:] != (2,) or len(image_points) < 4 or image_points.shape != pitch_points.shape:
         raise ValueError("至少需要 4 对图像点与球场坐标")
     if not np.isfinite(image_points).all() or not np.isfinite(pitch_points).all():
@@ -29,34 +47,45 @@ def build_calibration(manifest, payload):
     video = manifest["video"]
     if np.any(image_points < 0) or np.any(image_points[:, 0] >= video["width"]) or np.any(image_points[:, 1] >= video["height"]):
         raise ValueError("图像标定点超出视频范围")
-    length = float(payload.get("pitch_length_m", manifest["config"]["pitch_length_m"]))
-    width = float(payload.get("pitch_width_m", manifest["config"]["pitch_width_m"]))
     if not math.isfinite(length) or not math.isfinite(width) or min(length, width) <= 0:
         raise ValueError("球场尺寸无效")
     if np.any(pitch_points < 0) or np.any(pitch_points[:, 0] > length) or np.any(pitch_points[:, 1] > width):
         raise ValueError("场地点超出设置的球场尺寸")
     homography, inliers = cv2.findHomography(image_points, pitch_points, cv2.RANSAC, 1.0)
-    if homography is None or not np.isfinite(homography).all() or np.linalg.matrix_rank(homography) < 3:
+    if homography is None or not np.isfinite(homography).all() or np.linalg.matrix_rank(homography) < 3 or inliers is None or inliers.sum() < 4:
         raise ValueError("无法求得有效单应性，请检查对应点")
+    if pairs is not None:
+        accepted = inliers.ravel().astype(bool)
+        for points in [image_points[accepted], pitch_points[accepted]]:
+            normalized = (points - points.mean(axis=0)) / max(float(np.std(points)), 1e-9)
+            if len(points) == 4 and any(abs((second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (third[0] - first[0])) < 1e-5 for first, second, third in combinations(normalized, 3)):
+                raise ValueError("参考点退化，请选择四个任意三点不共线的地面点")
     start = payload.get("start_frame", manifest["start_frame"])
     end = payload.get("end_frame", manifest["end_frame"])
     reference = payload.get("reference_frame", start)
     if any(type(value) is not int for value in [start, end, reference]) or not manifest["start_frame"] <= start <= reference < end <= manifest["end_frame"]:
         raise ValueError("标定有效帧区间或参考帧不匹配")
-    roi = np.asarray(payload.get("roi", cv2.convexHull(image_points.astype(np.float32)).reshape(-1, 2).tolist()), dtype=float)
+    default_roi = [[0, 0], [video["width"] - 1, 0], [video["width"] - 1, video["height"] - 1], [0, video["height"] - 1]] if pairs is not None else cv2.convexHull(image_points.astype(np.float32)).reshape(-1, 2).tolist()
+    roi = np.asarray(payload.get("roi", default_roi), dtype=float)
     if roi.ndim != 2 or roi.shape[1:] != (2,) or len(roi) < 3 or not np.isfinite(roi).all() or cv2.contourArea(roi.astype(np.float32)) < 1:
         raise ValueError("可靠区域必须为至少三个点构成的有效多边形")
     if np.any(roi < 0) or np.any(roi[:, 0] >= video["width"]) or np.any(roi[:, 1] >= video["height"]):
         raise ValueError("可靠区域超出视频范围")
     projected = cv2.perspectiveTransform(image_points.reshape(-1, 1, 2), homography).reshape(-1, 2)
+    reprojected = cv2.perspectiveTransform(pitch_points.reshape(-1, 1, 2), np.linalg.inv(homography)).reshape(-1, 2)
+    if not np.isfinite(projected).all() or not np.isfinite(reprojected).all():
+        raise ValueError("标定产生无效投影，请检查参考点")
     return {
         "schema_version": 1, "video_sha256": manifest["video_sha256"],
+        "mode": "static", "pitch_model": model, "pitch_spec": spec,
+        "point_pairs": [{"landmark_id": pair["landmark_id"], "image": image_points[index].tolist()} for index, pair in enumerate(pairs)] if pairs is not None else None,
         "width": video["width"], "height": video["height"],
         "reference_frame": reference, "start_frame": start, "end_frame": end,
         "pitch_length_m": length, "pitch_width_m": width,
         "image_points": image_points.tolist(), "pitch_points": pitch_points.tolist(),
         "homography": homography.tolist(), "roi": roi.tolist(),
         "fit_rmse_m": float(np.sqrt(np.mean(np.sum((projected - pitch_points) ** 2, axis=1)))),
+        "fit_rmse_px": float(np.sqrt(np.mean(np.sum((reprojected - image_points) ** 2, axis=1)))),
         "inlier_count": int(inliers.sum()), "reviewed": payload.get("reviewed") is True,
         "note": str(payload.get("note", "")),
     }
