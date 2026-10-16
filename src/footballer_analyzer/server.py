@@ -11,10 +11,10 @@ import threading
 import cv2
 
 from .calibration import calibration_directory, load_calibration, save_calibration
-from .config import ROOT
+from .config import ROOT, config_from_dict, load_config
 from .identity import load_players, validate_bindings
 from .pitch_geometry import pitch_polylines
-from .storage import read_json, read_rows, read_yaml, write_yaml
+from .storage import new_id, read_json, read_rows, read_yaml, write_yaml
 from .video import read_frame
 
 WEB = Path(__file__).parent / "web"
@@ -23,12 +23,91 @@ WEB = Path(__file__).parent / "web"
 class ReviewApp:
     """管理输出根目录、轨迹缓存和编辑锁，供本地 HTTP 处理器共享。"""
 
-    def __init__(self, output_root):
+    def __init__(self, output_root, clips_root=ROOT / "data/clips"):
         """解析输出根目录，初始化可重入锁与轨迹缓存。"""
         self.output_root = Path(output_root).resolve()
         self.lock = threading.RLock()
         self.track_cache = {}
         self.calibration_jobs = {}
+        self.clips_root = Path(clips_root).resolve()
+        self.analysis_job = {"status": "idle"}
+
+    def clip_path(self, clip_id):
+        """解析素材库内的视频文件；拒绝越界、子目录及非视频文件。"""
+        if not isinstance(clip_id, str) or not clip_id or "/" in clip_id or "\\" in clip_id:
+            raise ValueError("素材标识无效")
+        path = (self.clips_root / clip_id).resolve()
+        if path.parent != self.clips_root or path.suffix.lower() not in {".mp4", ".mov", ".avi", ".mkv"} or not path.is_file():
+            raise ValueError("找不到该视频素材")
+        return path
+
+    def clips(self):
+        """列出素材与已完成人物、场地运行数量；仅白线运行不视为人物处理完成。"""
+        completed = {}
+        for manifest_path in self.output_root.glob("run_*/manifest.json"):
+            manifest = read_json(manifest_path)
+            if manifest["status"] != "complete" or manifest.get("kind") == "white_line_review":
+                continue
+            video = str(Path(manifest["config"]["video"]).resolve())
+            counts = completed.setdefault(video, {"tracking_runs": 0, "calibrated_runs": 0})
+            counts["tracking_runs"] += 1
+            if (manifest_path.parent / "calibration.yaml").is_file():
+                counts["calibrated_runs"] += 1
+        entries = []
+        for path in sorted(self.clips_root.glob("*")):
+            if path.is_file() and path.suffix.lower() in {".mp4", ".mov", ".avi", ".mkv"}:
+                try:
+                    source = self.clip_path(path.name)
+                except ValueError:
+                    continue
+                entries.append({"clip_id": path.name, "size_bytes": source.stat().st_size, **completed.get(str(source), {"tracking_runs": 0, "calibrated_runs": 0})})
+        return entries
+
+    def start_analysis(self, payload):
+        """校验素材及有限参数，启动唯一后台人物与场地任务；同参数重复请求复用。"""
+        from .dynamic_calibration import WhiteLineCalibrator
+
+        source = self.clip_path(payload.get("clip_id"))
+        values = load_config(ROOT / "configs/tracking_quality.yaml").snapshot()
+        values.update(video=str(source), output_root=str(self.output_root), clip_id=source.stem, match_id=f"local_{source.stem}")
+        for key in ["pitch_length_m", "pitch_width_m", "start_frame", "end_frame", "imgsz"]:
+            if key in payload:
+                values[key] = payload[key]
+        config = config_from_dict(values)
+        if config.imgsz not in {1280, 1920}:
+            raise ValueError("检测尺寸仅支持 1280 或 1920")
+        WhiteLineCalibrator(config.pitch_length_m, config.pitch_width_m)
+        if not config.weights.is_file():
+            raise ValueError(f"缺少本地模型权重：{config.weights}")
+        with self.lock:
+            if self.analysis_job.get("status") == "running":
+                if self.analysis_job["config"] == config.snapshot():
+                    return dict(self.analysis_job)
+                raise ValueError("已有素材正在分析，请等待完成后再开始")
+            job = {"job_id": new_id("analysis"), "status": "running", "stage": "queued", "clip_id": source.name, "processed_frames": 0, "total_frames": 0, "run_id": None, "config": config.snapshot()}
+            self.analysis_job = job
+
+        def progress(stage, processed, total, run_dir):
+            """原子更新阶段及源帧进度，人物完成后提供可打开的运行标识。"""
+            with self.lock:
+                job.update(stage=stage, processed_frames=processed, total_frames=total)
+                if run_dir is not None:
+                    job["run_id"] = run_dir.name
+
+        def worker():
+            """顺序分析并发布结果；失败保存原因，保留已经完成的人物缓存。"""
+            try:
+                from .analysis import analyze_clip
+
+                run_dir = analyze_clip(config, progress)
+                with self.lock:
+                    job.update(status="complete", stage="complete", run_id=run_dir.name)
+            except Exception as error:
+                with self.lock:
+                    job.update(status="failed", error=str(error))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return dict(job)
 
     def run_dir(self, run_id):
         """返回根目录内有效运行的绝对路径；非法 ID、越界或缺清单时抛出 ValueError。"""
@@ -191,6 +270,18 @@ def handler_for(app):
                 path = unquote(urlsplit(self.path).path)
                 if path == "/api/runs":
                     return self.send_json(app.runs())
+                if path == "/api/clips":
+                    return self.send_json(app.clips())
+                if path == "/api/analysis-job":
+                    with app.lock:
+                        return self.send_json(dict(app.analysis_job))
+                clip_match = re.fullmatch(r"/api/clips/([^/]+)/preview", path)
+                if clip_match:
+                    frame = read_frame(app.clip_path(clip_match[1]), 0)
+                    success, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    if not success:
+                        raise ValueError("素材预览编码失败")
+                    return self.send_bytes(encoded.tobytes(), "image/jpeg")
                 match = re.fullmatch(r"/api/runs/([^/]+)(?:/(.*))?", path)
                 if match:
                     run_id, action = match.groups()
@@ -259,6 +350,8 @@ def handler_for(app):
                 payload = json.loads(self.rfile.read(length))
                 if not isinstance(payload, dict):
                     raise ValueError("请求必须为 JSON 对象")
+                if urlsplit(self.path).path == "/api/analysis":
+                    return self.send_json(app.start_analysis(payload))
                 match = re.fullmatch(r"/api/runs/([^/]+)/(calibration|calibration-auto|calibration-review|bindings|players|report)", urlsplit(self.path).path)
                 if not match:
                     return self.send_json({"error": "接口不存在"}, 404)

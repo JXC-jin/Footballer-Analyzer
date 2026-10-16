@@ -14,10 +14,10 @@ from .teams import TeamClassifier, shirt_feature
 from .video import inspect_video, read_frames
 
 
-def track(config: Config) -> Path:
+def track(config: Config, progress=None) -> Path:
     """分析配置指定的源帧窗口，创建独立运行目录并返回其路径。
 
-    写出原始 Parquet、预览视频、轨迹目录与绑定模板；跟踪器跨帧复用，失败写入清单后抛错。
+    写出原始缓存并复用跨帧跟踪器；progress 接收阶段、已处理数与总数，失败写入清单后抛错。
     """
     info = inspect_video(config.video)
     end_frame = config.end_frame if config.end_frame is not None else info.frame_count
@@ -42,12 +42,18 @@ def track(config: Config) -> Path:
         teams = TeamClassifier()
         features = []
         sample_end = min(end_frame, config.start_frame + round(info.fps * 8))
-        for packet in read_frames(config.video, config.start_frame, sample_end, max(1, round(info.fps))):
+        sample_stride = max(1, round(info.fps))
+        sample_total = len(range(config.start_frame, sample_end, sample_stride))
+        if progress is not None:
+            progress("sampling", 0, sample_total)
+        for sample_index, packet in enumerate(read_frames(config.video, config.start_frame, sample_end, sample_stride), 1):
             samples = detector.detect(packet.image)
             for box in samples[samples.confidence >= config.track_activation_threshold + 0.1].xyxy:
                 feature = shirt_feature(packet.image, box)
                 if feature is not None:
                     features.append(feature)
+            if progress is not None:
+                progress("sampling", sample_index, sample_total)
         teams.fit(features[:256])
         write_json(run_dir / "teams.json", {"centers": teams.model.cluster_centers_.tolist() if teams.model is not None else [], "labels": {"cluster_0": "球队颜色簇 A", "cluster_1": "球队颜色簇 B"}})
         preview = cv2.VideoWriter(str(run_dir / "tracks.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), info.fps / config.stride, (info.width, info.height))
@@ -57,6 +63,9 @@ def track(config: Config) -> Path:
         processed = 0
         detection_count = 0
         observation_count = 0
+        total = len(range(config.start_frame, end_frame, config.stride))
+        if progress is not None:
+            progress("tracking", 0, total)
         try:
             with RowWriter(run_dir / "tracks.parquet", TRACK_SCHEMA) as writer, RowWriter(run_dir / "detections.parquet", DETECTION_SCHEMA) as detection_writer:
                 for packet in read_frames(config.video, config.start_frame, end_frame, config.stride):
@@ -95,6 +104,8 @@ def track(config: Config) -> Path:
                         cv2.putText(annotated, f"#{track_id}", (int(left), max(15, int(top) - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                     preview.write(annotated)
                     processed += 1
+                    if progress is not None:
+                        progress("tracking", processed, total)
                     if processed % 50 == 0:
                         print(f"[track] {processed} 帧 / {len(catalog)} 条轨迹", flush=True)
         finally:
