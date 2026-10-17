@@ -39,6 +39,8 @@ class Config:
     filter_beta: float = 0.0
     pitch_model: str = "eleven"
     calibration_method: str = "white_lines"
+    ball_detection_enabled: bool = True
+    ball_confidence: float = 0.15
 
     def snapshot(self):
         """返回可序列化配置，将 Path 转为字符串。"""
@@ -86,6 +88,10 @@ def config_from_dict(payload: dict) -> Config:
             raise ValueError(f"{key} 必须为有限正数")
     if config.confidence >= 1:
         raise ValueError("confidence 必须小于 1")
+    if type(config.ball_detection_enabled) is not bool:
+        raise ValueError("ball_detection_enabled 必须为布尔值")
+    if type(config.ball_confidence) not in (int, float) or not math.isfinite(config.ball_confidence) or not 0 < config.ball_confidence < 1:
+        raise ValueError("ball_confidence 必须在 (0, 1) 内")
     for key in ["nms_iou", "minimum_matching_threshold"]:
         value = getattr(config, key)
         if not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value < 1:

@@ -69,6 +69,7 @@ class TrackingTests(unittest.TestCase):
         with patch("footballer_analyzer.detection.YOLO") as model_type, patch("footballer_analyzer.detection.sv.Detections.from_ultralytics"):
             weights = Mock(spec=Path)
             weights.is_file.return_value = True
+            model_type.return_value.names = {0: "person", 32: "sports ball"}
             detector = YoloDetector(weights)
             image = np.zeros((64, 64, 3), dtype=np.uint8)
             detector.detect(image)
@@ -101,8 +102,12 @@ class TrackingTests(unittest.TestCase):
             first = people([[10, 5, 25, 40], [40, 5, 55, 40]], [0.9, 0.15])
             low = people([[10, 5, 25, 40], [40, 5, 55, 40]], [0.15, 0.15])
             noise = people([[40, 5, 55, 40]], [0.15])
+            empty_balls = sv.Detections.empty()
             with patch("footballer_analyzer.pipeline.YoloDetector") as detector_type:
-                detector_type.return_value.detect.side_effect = [strong, first, low, noise, strong]
+                detector_type.return_value.detect.return_value = strong
+                detector_type.return_value.detect_objects.side_effect = [
+                    (first, empty_balls), (low, empty_balls), (noise, empty_balls), (strong, empty_balls),
+                ]
                 run_dir = track(Config(video_path, weights, root, root / "players.yaml", "test", "test"))
             raw_rows = list(read_rows(run_dir / "detections.parquet"))
             track_rows = list(read_rows(run_dir / "tracks.parquet"))

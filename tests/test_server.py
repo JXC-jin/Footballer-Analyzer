@@ -66,6 +66,34 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(refreshed["detections"][0]["confidence"], 0.15)
             self.assertEqual(len(refreshed["tracks"]), 10)
 
+    def test_ball_cache_refreshes_without_changing_people(self):
+        """区分旧运行与空球缓存，新增、替换、删除球缓存均使响应更新。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir, _ = test_reporting.ReportingTests().prepare_run(temporary)
+            app = ReviewApp(temporary)
+            original = app.data(run_dir.name)
+            self.assertIsNone(original["ball_detections"])
+            ball_path = run_dir / "ball_detections.parquet"
+            with RowWriter(ball_path, DETECTION_SCHEMA):
+                pass
+            self.assertEqual(app.data(run_dir.name)["ball_detections"], [])
+            row = dict(original["tracks"][0], class_id=32, confidence=0.65)
+            with RowWriter(ball_path, DETECTION_SCHEMA) as writer:
+                writer.append(row)
+            refreshed = app.data(run_dir.name)
+            self.assertEqual(refreshed["ball_detections"][0]["class_id"], 32)
+            self.assertEqual(refreshed["ball_detections"][0]["confidence"], 0.65)
+            with RowWriter(ball_path, DETECTION_SCHEMA) as writer:
+                writer.append({**row, "confidence": 0.8})
+            replaced = app.data(run_dir.name)
+            self.assertEqual(replaced["ball_detections"][0]["confidence"], 0.8)
+            self.assertEqual(replaced["tracks"], original["tracks"])
+            self.assertEqual(refreshed["detections"], original["detections"])
+            # 仅移除本测试临时目录中刚创建的缓存，验证旧运行语义恢复。
+            self.assertEqual(ball_path.resolve().parent, run_dir.resolve())
+            ball_path.unlink()
+            self.assertIsNone(app.data(run_dir.name)["ball_detections"])
+
     def test_local_api_frame_and_input_boundaries(self):
         """验证运行列表与 JPEG 帧可读，越界帧、非法路径、跨源写入和错误 Host 被拒绝。"""
         with tempfile.TemporaryDirectory() as temporary:
@@ -77,6 +105,8 @@ class ServerTests(unittest.TestCase):
             try:
                 with urlopen(base + "/api/runs") as response:
                     self.assertEqual(json.load(response)[0]["run_id"], "run_test")
+                with urlopen(base + "/api/runs/run_test") as response:
+                    self.assertIsNone(json.load(response)["ball_detections"])
                 with urlopen(base + "/api/runs/run_test/frames/4") as response:
                     frame = cv2.imdecode(np.frombuffer(response.read(), dtype=np.uint8), cv2.IMREAD_COLOR)
                     self.assertEqual(frame.shape[:2], (48, 64))

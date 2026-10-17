@@ -1,5 +1,5 @@
 const element = (id) => document.getElementById(id);
-const state = { runId: null, data: null, frame: 0, selected: null, image: null, whiteImage: null, playing: false, pointMode: false, roiMode: false, roi: [], points: [], requestId: 0, runRequestId: 0, frameRows: new Map(), detectionRows: new Map(), motionRows: new Map(), draftDirty: false, calibrationTimer: null };
+const state = { runId: null, data: null, frame: 0, selected: null, image: null, whiteImage: null, playing: false, pointMode: false, roiMode: false, roi: [], points: [], requestId: 0, runRequestId: 0, frameRows: new Map(), detectionRows: new Map(), ballRows: new Map(), motionRows: new Map(), draftDirty: false, calibrationTimer: null };
 const colors = { home: "#28cfac", away: "#f9b26a", cluster_0: "#28cfac", cluster_1: "#f9b26a", unknown: "#a6b3b2" };
 const reasons = { unbound: "身份尚未确认", excluded: "人工排除", outside_roi: "超出可靠统计区域", outside_pitch: "投影超出球场", clipped_feet: "脚点被画面裁切", uncalibrated: "尚未标定", calibration_unreliable: "本帧白线几何不足，暂停场地投影", outside_calibration_window: "超出标定有效区间", invalid_projection: "投影无效", speed_jump: "异常速度跳变，已切段" };
 const analysis = { clips: [], timer: null, running: false, activeClip: null, handledId: null, runId: null };
@@ -202,6 +202,22 @@ function drawVideo(observations) {
     context.fillStyle = selected ? "#123d2f" : observation.color;
     context.fillText(label, row.bbox_x1 + 6, Math.max(20, row.bbox_y1 - 8));
     context.beginPath(); context.arc((row.bbox_x1 + row.bbox_x2) / 2, row.bbox_y2, selected ? 6 : 4, 0, Math.PI * 2); context.fill();
+  }
+  const balls = state.ballRows.get(state.frame) || [];
+  element("ball-summary").textContent = state.data.ball_detections == null
+    ? "此运行没有球检测缓存，请重新分析视频。"
+    : state.data.manifest.config.ball_detection_enabled === false
+      ? "此运行已关闭球检测。"
+      : `本帧球候选 ${balls.length} · 紫色框为模型候选及置信度，可能误检；未做跨帧追踪或空中球地面投影。`;
+  if (element("show-balls").checked) {
+    context.save(); context.strokeStyle = "#ec83ff"; context.fillStyle = "#ec83ff";
+    context.lineWidth = 3; context.setLineDash([]); context.font = "18px sans-serif";
+    for (const row of balls) {
+      context.strokeRect(row.bbox_x1, row.bbox_y1, row.bbox_x2 - row.bbox_x1, row.bbox_y2 - row.bbox_y1);
+      context.fillText(`球候选 ${row.confidence.toFixed(2)}`, row.bbox_x1, Math.max(18, row.bbox_y1 - 6));
+      context.beginPath(); context.arc((row.bbox_x1 + row.bbox_x2) / 2, (row.bbox_y1 + row.bbox_y2) / 2, 3, 0, Math.PI * 2); context.fill();
+    }
+    context.restore();
   }
   if (state.frame === Number(element("calibration-reference").value) && (state.pointMode || !element("calibration-tab").hidden)) state.points.forEach((point, index) => {
     context.fillStyle = "#ffd58f"; context.beginPath(); context.arc(point.image[0], point.image[1], 7, 0, Math.PI * 2); context.fill();
@@ -474,9 +490,11 @@ async function loadRun(runId, preserve = false) {
   const data = await request(api());
   if (runRequestId !== state.runRequestId) return;
   state.data = data;
-  state.frameRows.clear(); state.detectionRows.clear(); state.motionRows.clear();
+  state.frameRows.clear(); state.detectionRows.clear(); state.ballRows.clear(); state.motionRows.clear();
   for (const row of data.tracks) { if (!state.frameRows.has(row.frame_index)) state.frameRows.set(row.frame_index, []); state.frameRows.get(row.frame_index).push(row); }
   for (const row of data.detections || []) { if (!state.detectionRows.has(row.frame_index)) state.detectionRows.set(row.frame_index, []); state.detectionRows.get(row.frame_index).push(row); }
+  for (const row of data.ball_detections || []) { if (!state.ballRows.has(row.frame_index)) state.ballRows.set(row.frame_index, []); state.ballRows.get(row.frame_index).push(row); }
+  element("show-balls").disabled = data.ball_detections == null || data.manifest.config.ball_detection_enabled === false;
   element("show-unmatched").disabled = data.detections == null;
   if (data.detections == null) element("show-unmatched").checked = false;
   for (const row of data.latest_report?.motion || []) state.motionRows.set(`${row.frame_index}:${row.track_id}`, row);
@@ -654,6 +672,7 @@ element("start-analysis").addEventListener("click", async () => {
   }
 });
 element("show-boxes").addEventListener("change", draw);
+element("show-balls").addEventListener("change", draw);
 element("show-unmatched").addEventListener("change", draw);
 element("show-white-lines").addEventListener("change", draw);
 element("show-pitch-model").addEventListener("change", draw);

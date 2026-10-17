@@ -143,9 +143,14 @@ class ReviewApp:
             raise ValueError("该运行未完成，请查看运行清单中的错误")
         tracks_path = run_dir / "tracks.parquet"
         detections_path = run_dir / "detections.parquet"
-        cache_key = (run_id, tracks_path.stat().st_mtime_ns, detections_path.stat().st_mtime_ns if detections_path.exists() else None)
+        balls_path = run_dir / "ball_detections.parquet"
+        cache_key = (run_id, tracks_path.stat().st_mtime_ns, detections_path.stat().st_mtime_ns if detections_path.exists() else None, balls_path.stat().st_mtime_ns if balls_path.exists() else None)
         if cache_key not in self.track_cache:
-            self.track_cache = {cache_key: {"tracks": list(read_rows(tracks_path)), "detections": list(read_rows(detections_path)) if detections_path.exists() else None}}
+            self.track_cache = {cache_key: {
+                "tracks": list(read_rows(tracks_path)),
+                "detections": list(read_rows(detections_path)) if detections_path.exists() else None,
+                "ball_detections": list(read_rows(balls_path)) if balls_path.exists() else None,
+            }}
         players = load_players(Path(manifest["config"]["players"]))
         bindings = read_yaml(run_dir / "bindings.yaml", {"run_id": run_id, "bindings": []})
         calibration = load_calibration(run_dir)
